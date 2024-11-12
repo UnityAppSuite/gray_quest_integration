@@ -1,8 +1,59 @@
 # Copyright (c) 2024, Hybrowlabs Technologies and contributors
 # For license information, please see license.txt
-# import frappe
+import frappe
+import base64
+import requests
+from frappe import _
 from frappe.model.document import Document
+from frappe.utils import call_hook_method
+from payments.utils import create_payment_gateway
+from grayquest.utils import get_payload
 
 
 class GrayQuestSettings(Document):
-    pass
+    supported_currencies = ("INR",)
+
+    def after_insert(self):
+        create_payment_gateway("GrayQuest", self.doctype, self.name)
+        call_hook_method("payment_gateway_enabled", gateway="GrayQuest")
+
+    def validate_transaction_currency(self, currency):
+        if currency not in self.supported_currencies:
+            frappe.throw(
+                _(
+                    "Please select another payment method. Razorpay does not support transactions in currency '{0}'"
+                ).format(currency)
+            )
+
+    def get_payment_url(self, **kwargs):
+        return self.generate_url(kwargs)
+
+    def generate_url(self, kwargs):
+        headers = self.get_headers()
+        payload = get_payload(kwargs)
+        api_url = self.api_url.strip("/")
+        endpoint = f"{api_url}/v1/pp/redirect/{self.slug}"
+
+        response = requests.post(endpoint, headers=headers, json=payload)
+
+        if response.status_code == 201:
+            return response.json().get("data", {}).get("redirection_url")
+        else:
+            frappe.log_error(_("GrayQuest Payment Gateway Error"), response.json())
+            return response.json().get("message")
+
+    def get_headers(self):
+        if self.api_key and self.client_id and self.client_secret:
+            client_secret = self.get_password("client_secret")
+            api_key = self.get_password("api_key")
+
+            # Encode client_id and client_secret in base64
+            credentials = f"{self.client_id}:{client_secret}"
+            auth_token = base64.b64encode(credentials.encode()).decode()
+
+            # Headers
+            return {
+                "Authorization": f"Basic {auth_token}",
+                "GQ-API-Key": api_key,
+                "Content-Type": "application/json",
+            }
