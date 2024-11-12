@@ -1,0 +1,100 @@
+{
+ "actions": [],
+ "autoname": "field:gateway_name",
+ "creation": "2024-11-11 13:06:53.073846",
+ "default_view": "List",
+ "doctype": "DocType",
+ "document_type": "System",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "gateway_name",
+  "api_url",
+  "slug",
+  "redirect_to",
+  "column_break_ssba",
+  "client_id",
+  "client_secret",
+  "api_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "API Key",
+   "reqd": 1
+  },
+  {
+   "description": "Transaction completion page",
+   "fieldname": "redirect_to",
+   "fieldtype": "Link",
+   "label": "Redirect To",
+   "options": "Web Page",
+   "reqd": 1
+  },
+  {
+   "fieldname": "gateway_name",
+   "fieldtype": "Data",
+   "label": "Gateway Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "client_secret",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "Client Secret",
+   "reqd": 1
+  },
+  {
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Client ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "slug",
+   "fieldtype": "Data",
+   "label": "Slug",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_ssba",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "api_url",
+   "fieldtype": "Data",
+   "label": "API URL",
+   "reqd": 1,
+   "unique": 1
+  }
+ ],
+ "links": [],
+ "modified": "2024-11-12 11:54:55.982780",
+ "modified_by": "Administrator",
+ "module": "GrayQuest",
+ "name": "GrayQuest Settings",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "read_only": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
