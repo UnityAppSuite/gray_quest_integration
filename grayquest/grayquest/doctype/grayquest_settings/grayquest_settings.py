@@ -8,6 +8,10 @@ from frappe.model.document import Document
 from frappe.utils import call_hook_method
 from payments.utils import create_payment_gateway
 from grayquest.utils import get_payload
+from grayquest.utils.webhook import (
+    handle_payment_gateway_webhook,
+    handle_emi_webhook,
+)
 
 
 class GrayQuestSettings(Document):
@@ -56,4 +60,17 @@ class GrayQuestSettings(Document):
                 "Authorization": f"Basic {auth_token}",
                 "GQ-API-Key": api_key,
                 "Content-Type": "application/json",
+            }
+
+    def handle_webhook(self, data):
+        # frappe.set_user("Administrator")
+        if data.get("entity") == "direct":
+            return handle_payment_gateway_webhook(data)
+        elif data.get("entity") == "monthly-emi":
+            return handle_emi_webhook(data)
+        else:
+            frappe.log_error(_("Invalid Webhook Entity"))
+            return {
+                "status": "error",
+                "message": _("Invalid Webhook Entity"),
             }
