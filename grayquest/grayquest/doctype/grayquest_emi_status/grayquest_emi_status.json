@@ -1,0 +1,44 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-11-14 10:04:00.138122",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "column_break_aeep",
+  "timestamp"
+ ],
+ "fields": [
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Form Submitted\nApproved\nDownpayment Captured\nProcess Completed\nDisbursed\nInstallment Captured\nInstallment Overdue\nClosed\nBackout\nRejected"
+  },
+  {
+   "fieldname": "column_break_aeep",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "timestamp",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Timestamp"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2024-11-14 12:17:43.348676",
+ "modified_by": "Administrator",
+ "module": "GrayQuest",
+ "name": "GrayQuest EMI Status",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
