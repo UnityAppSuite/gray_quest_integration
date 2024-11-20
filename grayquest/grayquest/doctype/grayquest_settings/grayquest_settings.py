@@ -11,6 +11,7 @@ from grayquest.utils import get_payload
 from grayquest.utils.webhook import (
     handle_payment_gateway_webhook,
     handle_emi_webhook,
+    add_webhook_log,
 )
 
 
@@ -63,7 +64,8 @@ class GrayQuestSettings(Document):
             }
 
     def handle_webhook(self, data):
-        # frappe.set_user("Administrator")
+        # Add webhook log
+        self.add_webhook_log(data)
         if data.get("entity") == "direct":
             return handle_payment_gateway_webhook(data)
         elif data.get("entity") == "monthly-emi":
@@ -74,3 +76,6 @@ class GrayQuestSettings(Document):
                 "status": "error",
                 "message": _("Invalid Webhook Entity"),
             }
+
+    def add_webhook_log(self, data):
+        add_webhook_log(data)

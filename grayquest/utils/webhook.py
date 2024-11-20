@@ -58,35 +58,36 @@ def handle_emi_webhook(data):
         udf_details = data.get("udf_details", {})
         doctype = udf_details.get("udf_1")
         docname = udf_details.get("udf_2")
-        
+
         # Extract application details from the webhook data
         application_details = data.get("application_details")
         application_code = application_details.get("code")
-        
+
         # Update the document with transaction ID and EMI payment status
         db.set_value(
             doctype, docname, {"transaction_id": application_code, "is_emi_payment": 1}
         )
-        
+
         # Retrieve the document using doctype and docname
         doc = get_doc(doctype, docname)
-        
+
         # Update EMI status in the payment request
         event = data.get("event")
         timestamp = data.get("timestamp")
         update_emi_status(doc, event, timestamp)
-        
+
         # If the event is 'emi.disbursed', mark the payment as authorized/completed
         if event == "emi.disbursed":
             doc.on_payment_authorized(status="Completed")
             response["message"] = _("EMI Disbursed")
-        
+
         # Return success message for other events
         response["message"] = _("EMI Status Updated")
     except Exception as e:
         # Log the error and return an error message
         frappe.log_error(f"EMI Webhook Error: {str(e)}", frappe.get_traceback())
         response["message"] = _("Error in EMI Webhook")
+
 
 def handle_response_web_form(data):
     udf_details = data.get("udf_details")
@@ -128,3 +129,53 @@ def update_emi_status(doc, event, timestamp):
         )
         doc.save(ignore_permissions=True)
         doc.reload()
+
+
+def add_webhook_log(data):
+    """
+    Add Webhook Log
+
+    Args:
+        data (dict): Webhook data
+    """
+    try:
+        timestamp = data.get("timestamp")
+        if not timestamp:
+            timestamp = now_datetime()
+        elif isinstance(timestamp, str):
+            timestamp = get_datetime(timestamp)
+        application_details = data.get("application_details", {})
+        application_code = application_details.get("code")
+        udf_details = data.get("udf_details", {})
+        docname = udf_details.get("udf_2")
+        student = db.get_value("Payment Request", docname, "party")
+        entity = data.get("entity")
+        if entity == "direct":
+            entity_type = "Payment Gateway"
+        elif entity == "monthly-emi":
+            entity_type = "Monthly EMI"
+        else:
+            entity_type = ""
+        # Create a new Webhook Log document
+        webhook_log = frappe.get_doc(
+            {
+                "doctype": "GrayQuest Webhook Log",
+                "entity_type": entity_type,
+                "event": data.get("event"),
+                "timestamp": timestamp,
+                "reference_id": data.get("reference_id"),
+                "application_code": application_code,
+                "payment_request": docname,
+                "student": student,
+                "data": frappe.json.dumps(data, indent=4),
+            }
+        )
+        # Save the Webhook Log document
+        webhook_log.insert(ignore_permissions=True)
+    except Exception as e:
+        # Log the error
+        frappe.log_error(
+            f"GrayQuest Webhook Log Error: {str(e)}", frappe.get_traceback()
+        )
+        return False
+    return True
