@@ -3,7 +3,7 @@
 import frappe
 import base64
 import requests
-from frappe import _
+from frappe import _, db, response
 from frappe.model.document import Document
 from frappe.utils import call_hook_method
 from payments.utils import create_payment_gateway
@@ -79,3 +79,21 @@ class GrayQuestSettings(Document):
 
     def add_webhook_log(self, data):
         add_webhook_log(data)
+
+    def check_payment_status(self, payment_request):
+        """
+        Check the payment status of the transaction using the GrayQuest API.
+        if paid then mark the payment request as paid.
+        """
+        api_url = self.api_url.strip("/")
+        endpoint = f"{api_url}/v1/payments/fetch"
+        headers = self.get_headers()
+        transaction_id = db.get_value("Payment Request", payment_request, "transaction_id")
+        payload = {"application_code": transaction_id}
+        res = requests.get(endpoint, headers=headers, params=payload)
+
+        if res.status_code == 200:
+            response["message"] = res.json()
+        else:
+            frappe.log_error(_("GrayQuest Payment Gateway Error"), res.json())
+            response["message"] = res.json()
