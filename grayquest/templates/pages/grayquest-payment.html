@@ -1,0 +1,40 @@
+{% extends "templates/web.html" %}
+{% set status = frappe.form_dict.status %}
+
+{% block title %}
+{% if status == "success"%}{{ _("Payment Successful") }}{% else %}{{ _("Payment Failed") }}{% endif %}
+{% endblock %}
+
+{%- block page_content -%}
+
+
+{% if status == "success"%}
+    <div class='page-card'>
+    
+    	<div class='page-card-head'>
+    		<span class='indicator green'>
+    			{{ _("Payment Success") }}</span>
+    	</div>
+    	<p>{{ _("The payment was successful. You will receive an email with the details of the payment.") }}</p>
+    </div>
+    
+{% elif status == "failure"%}
+    <div class='page-card'>
+    
+    	<div class='page-card-head'>
+    		<span class='indicator red'>
+    			{{ _("Payment Failed") }}</span>
+    	</div>
+    	<p>{{ _("The payment was unsuccessful. Please try again") }}</p>
+    </div>
+{% endif %}
+
+<style>
+.hero-and-content {
+	background-color: #f5f7fa;
+}
+{% include "templates/styles/card_style.css" %}
+
+</style>
+
+{% endblock %}
