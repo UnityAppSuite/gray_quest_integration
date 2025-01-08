@@ -2,7 +2,7 @@ import frappe
 from frappe.utils import get_url, get_date_str
 
 
-def get_payload(data):
+def get_payload(controller, data):
     """
     Constructs the payload for a payment request.
 
@@ -33,7 +33,7 @@ def get_payload(data):
         "student_id": student.name,
         "customer_mobile": student.student_mobile_number or "9999999999",
         "fee_headers": get_fee_headers(ref_doc),
-        "student_details": get_student_details(student),
+        "student_details": get_student_details(controller, student),
         "customer_details": get_customer_details(guardian),
         "notes": get_notes(ref_doc, data),
         "udf_details": {"udf_1": doctype, "udf_2": docname},
@@ -45,7 +45,7 @@ def get_payload(data):
     return payload
 
 
-def get_student_details(student):
+def get_student_details(controller, student):
     """
     Constructs the student details dictionary.
 
@@ -61,6 +61,7 @@ def get_student_details(student):
 
     # Fetch program name
     program_name = frappe.get_value("Program", student.program, "program_name")
+    sequence = frappe.get_value("Program", student.program, "sequence")
 
     # Construct the student details dictionary
     student_details = {}
@@ -74,10 +75,6 @@ def get_student_details(student):
         student_details["student_type"] = "NEW"
     else:
         student_details["student_type"] = "EXISTING"
-    if program_name.isdigit():
-        student_details["student_class_id"] = int(program_name)
-    else:
-        student_details["student_class_id"] = program_name
     if date_of_birth:
         student_details["student_dob"] = date_of_birth
     if student.gender:
@@ -88,6 +85,12 @@ def get_student_details(student):
         student_details["student_admission_date"] = joining_date
     if student.blood_group:
         student_details["student_blood_group"] = student.blood_group
+
+    if controller.pass_class_id:
+        if program_name.isdigit():
+            student_details["student_class_id"] = int(program_name)
+        elif sequence:
+            student_details["student_class_id"] = int(sequence)
     return student_details
 
 

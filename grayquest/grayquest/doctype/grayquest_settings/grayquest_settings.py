@@ -35,12 +35,13 @@ class GrayQuestSettings(Document):
 
     def generate_url(self, kwargs):
         headers = self.get_headers()
-        payload = get_payload(kwargs)
+        payload = get_payload(self, kwargs)
         api_url = self.api_url.strip("/")
         endpoint = f"{api_url}/v1/pp/redirect/{self.slug}"
 
         response = requests.post(endpoint, headers=headers, json=payload)
-
+        print(payload)
+        print(response.json())
         if response.status_code == 201:
             return response.json().get("data", {}).get("redirection_url")
         else:
