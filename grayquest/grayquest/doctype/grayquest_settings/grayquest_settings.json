@@ -11,12 +11,11 @@
   "gateway_name",
   "api_url",
   "slug",
-  "redirect_to",
+  "pass_class_id",
   "column_break_ssba",
   "client_id",
   "client_secret",
-  "api_key",
-  "pass_class_id"
+  "api_key"
  ],
  "fields": [
   {
@@ -24,14 +23,6 @@
    "fieldtype": "Password",
    "in_list_view": 1,
    "label": "API Key",
-   "reqd": 1
-  },
-  {
-   "description": "Transaction completion page",
-   "fieldname": "redirect_to",
-   "fieldtype": "Link",
-   "label": "Redirect To",
-   "options": "Web Page",
    "reqd": 1
   },
   {
@@ -69,8 +60,7 @@
    "fieldname": "api_url",
    "fieldtype": "Data",
    "label": "API URL",
-   "reqd": 1,
-   "unique": 1
+   "reqd": 1
   },
   {
    "default": "0",
@@ -81,7 +71,7 @@
   }
  ],
  "links": [],
- "modified": "2025-01-08 13:15:48.716012",
+ "modified": "2025-01-09 15:50:05.122006",
  "modified_by": "Administrator",
  "module": "GrayQuest",
  "name": "GrayQuest Settings",
@@ -100,7 +90,6 @@
    "write": 1
   }
  ],
- "read_only": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
