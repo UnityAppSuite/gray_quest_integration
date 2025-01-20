@@ -129,12 +129,22 @@ def get_fee_headers(doc):
     """
     # Construct the fee headers dictionary
     fee = frappe.get_doc(doc.reference_doctype, doc.reference_name)
-    fee_headers = {
-        "total_payable": fee.grand_total,
-        "current_payable": doc.grand_total,
+    doctype_fields = {
+        "Fees": ("grand_total", "grand_total"),
+        "Fee Advance": ("outstanding_amount", "outstanding_amount"),
     }
-    return fee_headers
 
+    if fee.doctype in doctype_fields:
+        total_field, current_field = doctype_fields[fee.doctype]
+        return {
+            "total_payable": getattr(fee, total_field, 0),
+            "current_payable": getattr(doc, current_field, 0),
+        }
+
+    return {
+        "total_payable": 0,
+        "current_payable": 0,
+    }
 
 def get_notes(doc, data):
     """
