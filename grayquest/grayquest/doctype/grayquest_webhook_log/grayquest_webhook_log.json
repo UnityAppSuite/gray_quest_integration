@@ -13,7 +13,8 @@
   "application_code",
   "reference_id",
   "webhook_data_section",
-  "payment_request",
+  "reference_doctype",
+  "reference_name",
   "data"
  ],
  "fields": [
@@ -60,12 +61,6 @@
    "options": "Student"
   },
   {
-   "fieldname": "payment_request",
-   "fieldtype": "Link",
-   "label": "Payment Request",
-   "options": "Payment Request"
-  },
-  {
    "fieldname": "webhook_data_section",
    "fieldtype": "Section Break",
    "label": "Webhook Data"
@@ -74,11 +69,23 @@
    "fieldname": "data",
    "fieldtype": "JSON",
    "label": "Data"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference Doctype",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Reference Name",
+   "options": "reference_doctype"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2024-11-20 10:42:23.126589",
+ "modified": "2025-03-10 12:50:28.676197",
  "modified_by": "Administrator",
  "module": "GrayQuest",
  "name": "GrayQuest Webhook Log",
@@ -100,5 +107,5 @@
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
- "title_field": "payment_request"
+ "title_field": "reference_name"
 }

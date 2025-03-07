@@ -32,7 +32,12 @@ def handle_payment_gateway_webhook(data):
             # Update the transaction_id field in the document
             db.set_value(doctype, docname, "transaction_id", application_code)
             # Call the on_payment_authorized method on the document
-            doc.on_payment_authorized(status="Completed")
+            if doc.doctype == "Event Participant":
+                payment_details = data.get("payment_details", {})
+                if payment_details.get("status") == "PAID":
+                    doc.validate_payment(payment_details)
+            else:
+                doc.on_payment_authorized(status="Completed")
             # Return success response
             response["message"] = _("Payment Captured")
     except Exception as e:
@@ -147,8 +152,12 @@ def add_webhook_log(data):
         application_details = data.get("application_details", {})
         application_code = application_details.get("code")
         udf_details = data.get("udf_details", {})
+        doctype = udf_details.get("udf_1")
         docname = udf_details.get("udf_2")
-        student = db.get_value("Payment Request", docname, "party")
+        if doctype == "Payment Request":
+            student = db.get_value(doctype, docname, "party")
+        elif doctype == "Event Participant":
+            student = db.get_value(doctype, docname, "student")
         entity = data.get("entity")
         if entity == "direct":
             entity_type = "Payment Gateway"
@@ -165,7 +174,8 @@ def add_webhook_log(data):
                 "timestamp": timestamp,
                 "reference_id": data.get("reference_id"),
                 "application_code": application_code,
-                "payment_request": docname,
+                "reference_doctype": doctype,
+                "reference_name": docname,
                 "student": student,
                 "data": frappe.json.dumps(data, indent=4),
             }

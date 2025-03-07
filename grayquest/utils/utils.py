@@ -20,7 +20,10 @@ def get_payload(controller, data):
     ref_doc = frappe.get_doc(doctype, docname)
 
     # Fetch the student document associated with the reference document
-    student = frappe.get_doc(ref_doc.party_type, ref_doc.party)
+    if hasattr(ref_doc, "party_type") and hasattr(ref_doc, "party"):
+        student = frappe.get_doc(ref_doc.party_type, ref_doc.party)
+    else:
+        student = frappe.get_doc("Student", ref_doc.student)
 
     # Fetch the guardian ID and document associated with the student
     guardian_id = frappe.get_value(
@@ -127,24 +130,28 @@ def get_fee_headers(doc):
     Returns:
         dict: A dictionary containing the fee headers.
     """
-    # Construct the fee headers dictionary
-    fee = frappe.get_doc(doc.reference_doctype, doc.reference_name)
     doctype_fields = {
         "Fees": ("grand_total", "grand_total"),
         "Fee Advance": ("outstanding_amount", "outstanding_amount"),
+        "Event Participant": ("outstanding_amount", "outstanding_amount")
     }
 
-    if fee.doctype in doctype_fields:
-        total_field, current_field = doctype_fields[fee.doctype]
-        return {
-            "total_payable": getattr(fee, total_field, 0),
-            "current_payable": getattr(doc, current_field, 0),
-        }
+    doctype = getattr(doc, "reference_doctype", doc.doctype)
+    
+    if doctype in doctype_fields:
+        total_field, current_field = doctype_fields[doctype]
 
-    return {
-        "total_payable": 0,
-        "current_payable": 0,
-    }
+        if doctype == "Event Participant":
+            total = current = getattr(doc, current_field, 0)
+        else:
+            ref_doc = frappe.get_doc(doctype, doc.reference_name)
+            total = getattr(ref_doc, total_field, 0)
+            current = getattr(doc, current_field, 0)
+
+        return {"total_payable": total, "current_payable": current}
+
+    return {"total_payable": 0, "current_payable": 0}
+
 
 def get_notes(doc, data):
     """
