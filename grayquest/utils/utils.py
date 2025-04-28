@@ -35,7 +35,7 @@ def get_payload(controller, data):
     payload = {
         "student_id": student.name,
         "customer_mobile": student.student_mobile_number or "9999999999",
-        "fee_headers": get_fee_headers(ref_doc),
+        "fee_headers": get_fee_headers(ref_doc, data),
         "student_details": get_student_details(controller, student),
         "customer_details": get_customer_details(guardian),
         "notes": get_notes(ref_doc, data),
@@ -120,7 +120,7 @@ def get_customer_details(guardian):
     return customer_details
 
 
-def get_fee_headers(doc):
+def get_fee_headers(doc, data):
     """
     Constructs the fee headers dictionary.
 
@@ -149,8 +149,9 @@ def get_fee_headers(doc):
             current = getattr(doc, current_field, 0)
 
         return {"total_payable": total, "current_payable": current}
-
-    return {"total_payable": 0, "current_payable": 0}
+    else:
+        amount = data.get("amount", 0)
+        return {"total_payable": amount, "current_payable": amount}
 
 
 def get_notes(doc, data):

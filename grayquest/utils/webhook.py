@@ -29,15 +29,23 @@ def handle_payment_gateway_webhook(data):
             application_code = application_details.get("code")
             # Fetch the document using doctype and docname
             doc = get_doc(doctype, docname)
+            # Get payment details from the data
+            payment_details = data.get("payment_details", {})
+            amount = payment_details.get("amount")
             # Update the transaction_id field in the document
-            db.set_value(doctype, docname, "transaction_id", application_code)
+            if hasattr(doc, "transaction_id"):
+                doc.db_set("transaction_id", application_code)
+            if hasattr(doc, "paid_amount"):
+                doc.db_set("paid_amount", amount)
             # Call the on_payment_authorized method on the document
-            if doc.doctype == "Event Participant":
-                payment_details = data.get("payment_details", {})
-                if payment_details.get("status") == "PAID":
-                    doc.validate_payment(payment_details)
-            else:
-                doc.on_payment_authorized(status="Completed")
+            if payment_details.get("status") == "PAID":
+                if doc.doctype == "Payment Request":
+                    doc.on_payment_authorized(status="Completed")
+                else:
+                    if hasattr(doc, "validate_payment"):
+                        doc.validate_payment(payment_details)
+                    else:
+                        create_payment_entry(doc, amount=amount, transaction_id=application_code)
             # Return success response
             response["message"] = _("Payment Captured")
     except Exception as e:
@@ -156,7 +164,7 @@ def add_webhook_log(data):
         docname = udf_details.get("udf_2")
         if doctype == "Payment Request":
             student = db.get_value(doctype, docname, "party")
-        elif doctype == "Event Participant":
+        else:
             student = db.get_value(doctype, docname, "student")
         entity = data.get("entity")
         if entity == "direct":
@@ -189,3 +197,54 @@ def add_webhook_log(data):
         )
         return False
     return True
+
+def create_payment_entry(doc, amount=0, posting_date=None, reference_date=None, transaction_id=None):
+    """
+    Create Payment Entry for the given document 
+    Args:
+        doc (Document): Document
+        amount (int, optional): Amount. Defaults to 0.
+        posting_date (str, optional): Posting Date. Defaults to None.
+        reference_date (str, optional): Reference Date. Defaults to None.
+    """
+    try:
+        user = frappe.session.user
+        frappe.set_user("Administrator")
+        if hasattr(doc, "school") and doc.school:
+            paid_from = frappe.get_value("School", doc.school, "event_account")
+            company = frappe.get_value("Account", paid_from, "company")
+        else:
+            company = frappe.db.get_single_value('Global Defaults', 'default_company')
+            paid_from = frappe.get_value("Company", company, "default_receivable_account")
+        paid_to = frappe.get_value("Company", company, "default_income_account")
+        cost_center = frappe.get_value("Company", company, "cost_center")
+        payment_entry = frappe.get_doc(
+            {
+                "doctype": "Payment Entry",
+                "payment_type": "Receive",
+                "company": company,
+                "cost_center": cost_center,
+                "posting_date": posting_date or frappe.utils.nowdate(),
+                "reference_date": reference_date or frappe.utils.nowdate(),
+                "party_type": "Student",
+                "party": doc.student,
+                "party_name": doc.get("student_name"),
+                "paid_from": paid_from,
+                "paid_to": paid_to,
+                "paid_amount": amount,
+                "received_amount": amount,
+                "reference_doctype": doc.doctype,
+                "reference_name": doc.name,
+                "mode_of_payment": "Online",
+                "reference_no": transaction_id,
+                "school": doc.get("school"),
+                "program": doc.get("class"),
+            }
+        )
+        payment_entry.insert(ignore_permissions=True)
+        payment_entry.submit()
+        frappe.set_user(user)
+        return payment_entry
+    except Exception as e:
+        frappe.log_error("Error While Creating Payment Entry for Web Form", frappe.get_traceback())
+        return None
