@@ -41,8 +41,8 @@ def get_payload(controller, data):
         "notes": get_notes(ref_doc, data),
         "udf_details": {"udf_1": doctype, "udf_2": docname},
         "redirection": {
-            "success_url": f"{get_url()}/grayquest-payment",
-            "error_url": f"{get_url()}/grayquest-payment",
+            "success_url": f"{get_url()}/tgaa-connect/fees",
+            "error_url": f"{get_url()}/tgaa-connect/fees",
         },
     }
     return payload
