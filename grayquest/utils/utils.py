@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import get_url, get_date_str
+from frappe.utils import get_url, get_date_str, flt
 
 
 def get_payload(controller, data):
@@ -148,10 +148,10 @@ def get_fee_headers(doc, data):
             total = getattr(ref_doc, total_field, 0)
             current = getattr(doc, current_field, 0)
 
-        return {"total_payable": total, "current_payable": current}
+        return {"total_payable": flt(total, 2), "current_payable": flt(current, 2)}
     else:
         amount = data.get("amount", 0)
-        return {"total_payable": amount, "current_payable": amount}
+        return {"total_payable": flt(amount, 2), "current_payable": flt(amount, 2)}
 
 
 def get_notes(doc, data):
