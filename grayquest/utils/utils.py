@@ -174,7 +174,7 @@ def get_fee_headers(doc, data):
         "Fees": ("grand_total", "grand_total"),
         "Fee Advance": ("outstanding_amount", "outstanding_amount"),
         "Event Participant": ("outstanding_amount", "outstanding_amount"),
-        "Ticket": ("total_amount", "total_amount")
+        "Ticket": ("amount_after_discount", "amount_after_discount")
     }
 
     doctype = getattr(doc, "reference_doctype", doc.doctype)
