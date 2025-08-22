@@ -36,11 +36,10 @@ def _get_event_ticket_payload(ticket_doc, data):
     """
     # Get customer details from ticket
     guardian = frappe.get_doc("Guardian", ticket_doc.customer)
-    student = frappe.get_all("Student Guardian", {"guardian": guardian.name}, "parent", limit=1)
     surl = data.get("success_url")
     furl = data.get("failure_url")
     payload = {
-        "student_id": student[0].parent if student else None,
+        "student_id": guardian.guardian_name,
         "customer_mobile": guardian.mobile_number or "9999999999",
         "customer_details": get_customer_details(guardian),
         "fee_headers": get_fee_headers(ticket_doc, data),
@@ -184,9 +183,6 @@ def get_fee_headers(doc, data):
 
         if doctype == "Event Participant":
             total = current = getattr(doc, current_field, 0)
-        elif doctype == "Ticket":
-            # For Tickets, use the document directly
-            total = current = getattr(doc, "total_amount", 0)
         else:
             # For other document types, fetch referenced document
             if hasattr(doc, 'reference_name') and doc.reference_name:
