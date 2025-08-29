@@ -33,6 +33,7 @@ class GrayQuestSettings(Document):
             )
 
     def get_payment_url(self, **kwargs):
+        url = None
         try:
             url = self.generate_url(kwargs)
         except Exception as e:
