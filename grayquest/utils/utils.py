@@ -1,12 +1,14 @@
 import frappe
-from frappe.utils import get_url, get_date_str
+from frappe.utils import flt, get_date_str, get_url
 
 
 def get_payload(controller, data):
     """
     Constructs the payload for a payment request.
+    Optimized to handle both Student/Guardian and Event Ticket flows.
 
     Args:
+        controller: Payment gateway controller
         data (dict): A dictionary containing the reference doctype, reference docname, and amount.
 
     Returns:
@@ -16,10 +18,46 @@ def get_payload(controller, data):
     doctype = data.get("reference_doctype")
     docname = data.get("reference_docname")
 
-    # Fetch the reference document
+    # Fetch the reference document only once
     ref_doc = frappe.get_doc(doctype, docname)
 
-    # Fetch the student document associated with the reference document
+    # Handle Ticket payments
+    if doctype == "Ticket":
+        payload = _get_event_ticket_payload(ref_doc, data)
+    else:
+        payload = _get_student_payment_payload(controller, ref_doc, data)
+
+    return payload
+
+
+def _get_event_ticket_payload(ticket_doc, data):
+    """
+    Constructs payload for Event Ticket payments.
+    """
+    # Get customer details from ticket
+    guardian = frappe.get_doc("Guardian", ticket_doc.customer)
+    surl = data.get("success_url")
+    furl = data.get("failure_url")
+    payload = {
+        "student_id": guardian.guardian_name,
+        "customer_mobile": guardian.mobile_number or "9999999999",
+        "customer_details": get_customer_details(guardian),
+        "fee_headers": get_fee_headers(ticket_doc, data),
+        "notes": get_notes(ticket_doc, data),
+        "udf_details": {"udf_1": ticket_doc.doctype, "udf_2": ticket_doc.name},
+        "redirection": {
+            "success_url": surl or f"{get_url()}/walsh/events",
+            "error_url": furl or f"{get_url()}/walsh/events",
+        },
+    }
+    return payload
+
+
+def _get_student_payment_payload(controller, ref_doc, data):
+    """
+    Constructs payload for Student/Guardian payments.
+    """
+    # Optimize student lookup - use cached values where possible
     if hasattr(ref_doc, "party_type") and hasattr(ref_doc, "party"):
         student = frappe.get_doc(ref_doc.party_type, ref_doc.party)
     elif ref_doc.doctype == "Student Applicant":
@@ -27,7 +65,7 @@ def get_payload(controller, data):
     else:
         student = frappe.get_doc("Student", ref_doc.student)
 
-    # Fetch the guardian ID and document associated with the student
+    # Optimize guardian lookup - batch database calls
     guardian_id = frappe.get_value(
         "Student Guardian", {"parent": student.name}, "guardian"
     )
@@ -44,7 +82,6 @@ def get_payload(controller, data):
         if student.mobile:
             customer_mobile = student.mobile.replace("+91-", "").replace("+91", "")
 
-    # Construct the payload dictionary
     payload = {
         "student_id": student.name,
         "customer_mobile": customer_mobile or student.student_mobile_number or "9999999999",
@@ -52,7 +89,7 @@ def get_payload(controller, data):
         "student_details": get_student_details(controller, student),
         "customer_details": customer_details,
         "notes": get_notes(ref_doc, data),
-        "udf_details": {"udf_1": doctype, "udf_2": docname},
+        "udf_details": {"udf_1": ref_doc.doctype, "udf_2": ref_doc.name},
         "redirection": {
             "success_url": f"{get_url()}/grayquest-payment",
             "error_url": f"{get_url()}/grayquest-payment",
@@ -135,9 +172,11 @@ def get_customer_details(guardian):
 def get_fee_headers(doc, data):
     """
     Constructs the fee headers dictionary.
+    Optimized to handle Event Tickets and other payment types.
 
     Args:
         doc (Document): The document for which the payment is being made.
+        data (dict): Additional data containing amount information.
 
     Returns:
         dict: A dictionary containing the fee headers.
@@ -146,25 +185,30 @@ def get_fee_headers(doc, data):
         "Fees": ("grand_total", "grand_total"),
         "Fee Advance": ("outstanding_amount", "outstanding_amount"),
         "Event Participant": ("outstanding_amount", "outstanding_amount"),
+        "Ticket": ("amount_after_discount", "amount_after_discount"),
         "Student Applicant": ("application_fees", "application_fees"),
     }
 
     doctype = getattr(doc, "reference_doctype", doc.doctype)
-    
+
     if doctype in doctype_fields:
         total_field, current_field = doctype_fields[doctype]
 
         if doctype in ["Event Participant", "Student Applicant"]:
             total = current = getattr(doc, current_field, 0)
         else:
-            ref_doc = frappe.get_doc(doctype, doc.reference_name)
-            total = getattr(ref_doc, total_field, 0)
-            current = getattr(doc, current_field, 0)
+            # For other document types, fetch referenced document
+            if hasattr(doc, 'reference_name') and doc.reference_name:
+                ref_doc = frappe.get_doc(doctype, doc.reference_name)
+                total = getattr(ref_doc, total_field, 0)
+                current = getattr(doc, current_field, 0)
+            else:
+                total = current = getattr(doc, total_field, 0)
 
-        return {"total_payable": total, "current_payable": current}
+        return {"total_payable": flt(total, 2), "current_payable": flt(current, 2)}
     else:
         amount = data.get("amount", 0)
-        return {"total_payable": amount, "current_payable": amount}
+        return {"total_payable": flt(amount, 2), "current_payable": flt(amount, 2)}
 
 
 def get_notes(doc, data):

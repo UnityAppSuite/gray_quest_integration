@@ -1,6 +1,7 @@
 import frappe
-from frappe import _, get_doc, db, response
-from frappe.utils import now_datetime, get_datetime
+from frappe import _, db, get_doc, response
+from frappe.utils import get_datetime, now_datetime
+
 from grayquest.utils import EMI_STATUS_MAPPING
 
 
@@ -46,8 +47,26 @@ def handle_payment_gateway_webhook(data):
                         doc.validate_payment(payment_details)
                     else:
                         create_payment_entry(doc, amount=amount, transaction_id=application_code)
+            response["message"] = _("Payment successfully captured and processed.")
+
+        elif data.get("event") == "dt.payment.order.created":
+            if hasattr(doc, "validate_payment_order_created"):
+                res = doc.validate_payment_order_created(data)
+                if res:
+                    response["message"] = res
+                else:
+                    response["message"] = _("Payment order created, awaiting completion.")
+
+        elif data.get("event") == "dt.payment.failed":
+            if payment_details.get("status") == "FAILED":
+                if hasattr(doc, "validate_failed_payment"):
+                    res = doc.validate_failed_payment(payment_details)
+                    if res:
+                        response["message"] = res
+                    else:
+                        response["message"] = _("Payment failed. Please try again or contact support.")
+
             # Return success response
-            response["message"] = _("Payment Captured")
     except Exception as e:
         # Log the error and return error response
         frappe.log_error(
@@ -164,8 +183,10 @@ def add_webhook_log(data):
         docname = udf_details.get("udf_2")
         if doctype == "Payment Request":
             student = db.get_value(doctype, docname, "party")
-        else:
+        elif frappe.db.has_column(doctype, "student"):
             student = db.get_value(doctype, docname, "student")
+        else:
+            student = None
         entity = data.get("entity")
         if entity == "direct":
             entity_type = "Payment Gateway"
@@ -190,17 +211,15 @@ def add_webhook_log(data):
         )
         # Save the Webhook Log document
         webhook_log.insert(ignore_permissions=True)
-    except Exception as e:
+    except Exception:
         # Log the error
-        frappe.log_error(
-            f"GrayQuest Webhook Log Error: {str(e)}", frappe.get_traceback()
-        )
+        frappe.log_error("GrayQuest Webhook Log Error", frappe.get_traceback())
         return False
     return True
 
 def create_payment_entry(doc, amount=0, posting_date=None, reference_date=None, transaction_id=None):
     """
-    Create Payment Entry for the given document 
+    Create Payment Entry for the given document
     Args:
         doc (Document): Document
         amount (int, optional): Amount. Defaults to 0.
@@ -245,6 +264,6 @@ def create_payment_entry(doc, amount=0, posting_date=None, reference_date=None, 
         payment_entry.submit()
         frappe.set_user(user)
         return payment_entry
-    except Exception as e:
+    except Exception:
         frappe.log_error("Error While Creating Payment Entry for Web Form", frappe.get_traceback())
         return None
