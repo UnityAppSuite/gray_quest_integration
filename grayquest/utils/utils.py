@@ -60,6 +60,8 @@ def _get_student_payment_payload(controller, ref_doc, data):
     # Optimize student lookup - use cached values where possible
     if hasattr(ref_doc, "party_type") and hasattr(ref_doc, "party"):
         student = frappe.get_doc(ref_doc.party_type, ref_doc.party)
+    elif ref_doc.doctype == "Student Applicant":
+        student = ref_doc
     else:
         student = frappe.get_doc("Student", ref_doc.student)
 
@@ -67,19 +69,30 @@ def _get_student_payment_payload(controller, ref_doc, data):
     guardian_id = frappe.get_value(
         "Student Guardian", {"parent": student.name}, "guardian"
     )
-    guardian = frappe.get_doc("Guardian", guardian_id) if guardian_id else None
+    customer_details = {}
+    customer_mobile = None
+    if guardian_id:
+        guardian = frappe.get_doc("Guardian", guardian_id)
+        customer_details = get_customer_details(guardian)
+    elif ref_doc.doctype == "Student Applicant":
+        if student.applicant_name:
+            customer_details["customer_first_name"] = student.applicant_name
+        if student.email_id:
+            customer_details["customer_email"] = student.email_id
+        if student.mobile:
+            customer_mobile = student.mobile.replace("+91-", "").replace("+91", "")
 
     payload = {
         "student_id": student.name,
-        "student_details": get_student_details(controller, student),
-        "customer_mobile": student.student_mobile_number or "9999999999",
+        "customer_mobile": customer_mobile or student.student_mobile_number or "9999999999",
         "fee_headers": get_fee_headers(ref_doc, data),
-        "customer_details": get_customer_details(guardian) if guardian else {},
+        "student_details": get_student_details(controller, student),
+        "customer_details": customer_details,
         "notes": get_notes(ref_doc, data),
         "udf_details": {"udf_1": ref_doc.doctype, "udf_2": ref_doc.name},
         "redirection": {
-            "success_url": f"{get_url()}/tgaa-connect/fees",
-            "error_url": f"{get_url()}/tgaa-connect/fees",
+            "success_url": f"{get_url()}/grayquest-payment",
+            "error_url": f"{get_url()}/grayquest-payment",
         },
     }
     return payload
@@ -97,7 +110,8 @@ def get_student_details(controller, student):
     """
     # Format date of birth and joining date
     date_of_birth = get_date_str(student.date_of_birth)
-    joining_date = get_date_str(student.joining_date)
+    joining_date = student.get("joining_date")
+    student_status = student.get("student_status")
 
     # Fetch program name
     program_name = frappe.get_value("Program", student.program, "program_name")
@@ -111,10 +125,6 @@ def get_student_details(controller, student):
         student_details["student_middle_name"] = student.middle_name
     if student.last_name:
         student_details["student_last_name"] = student.last_name
-    if student.student_status == "New student":
-        student_details["student_type"] = "NEW"
-    else:
-        student_details["student_type"] = "EXISTING"
     if date_of_birth:
         student_details["student_dob"] = date_of_birth
     if student.gender:
@@ -122,9 +132,11 @@ def get_student_details(controller, student):
     if student.student_email_id:
         student_details["student_email"] = student.student_email_id
     if joining_date:
+        joining_date = get_date_str(joining_date)
         student_details["student_admission_date"] = joining_date
     if student.blood_group:
         student_details["student_blood_group"] = student.blood_group
+    student_details["student_type"] = "NEW" if not student_status or student_status == "New student" else "EXISTING"
 
     if controller.pass_class_id:
         if program_name.isdigit():
@@ -173,7 +185,8 @@ def get_fee_headers(doc, data):
         "Fees": ("grand_total", "grand_total"),
         "Fee Advance": ("outstanding_amount", "outstanding_amount"),
         "Event Participant": ("outstanding_amount", "outstanding_amount"),
-        "Ticket": ("amount_after_discount", "amount_after_discount")
+        "Ticket": ("amount_after_discount", "amount_after_discount"),
+        "Student Applicant": ("application_fees", "application_fees"),
     }
 
     doctype = getattr(doc, "reference_doctype", doc.doctype)
@@ -181,7 +194,7 @@ def get_fee_headers(doc, data):
     if doctype in doctype_fields:
         total_field, current_field = doctype_fields[doctype]
 
-        if doctype == "Event Participant":
+        if doctype in ["Event Participant", "Student Applicant"]:
             total = current = getattr(doc, current_field, 0)
         else:
             # For other document types, fetch referenced document
