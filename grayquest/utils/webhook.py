@@ -50,6 +50,12 @@ def handle_payment_gateway_webhook(data):
             response["message"] = _("Payment successfully captured and processed.")
 
         elif data.get("event") == "dt.payment.order.created":
+            udf_details = data.get("udf_details", {})
+            # Get doctype and docname from udf_details
+            doctype = udf_details.get("udf_1")
+            docname = udf_details.get("udf_2")
+            # Fetch the document using doctype and docname
+            doc = get_doc(doctype, docname)
             if hasattr(doc, "validate_payment_order_created"):
                 res = doc.validate_payment_order_created(data)
                 if res:
@@ -58,13 +64,17 @@ def handle_payment_gateway_webhook(data):
                     response["message"] = _("Payment order created, awaiting completion.")
 
         elif data.get("event") == "dt.payment.failed":
-            if payment_details.get("status") == "FAILED":
-                if hasattr(doc, "validate_failed_payment"):
-                    res = doc.validate_failed_payment(payment_details)
-                    if res:
-                        response["message"] = res
-                    else:
-                        response["message"] = _("Payment failed. Please try again or contact support.")
+            udf_details = data.get("udf_details", {})
+            # Get doctype and docname from udf_details
+            doctype = udf_details.get("udf_1")
+            docname = udf_details.get("udf_2")
+            doc = get_doc(doctype, docname)
+            if hasattr(doc, "validate_failed_payment"):
+                res = doc.validate_failed_payment(payment_details)
+                if res:
+                    response["message"] = res
+                else:
+                    response["message"] = _("Payment failed. Please try again or contact support.")
 
             # Return success response
     except Exception as e:
