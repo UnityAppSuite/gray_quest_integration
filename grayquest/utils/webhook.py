@@ -70,7 +70,7 @@ def handle_payment_gateway_webhook(data):
             docname = udf_details.get("udf_2")
             doc = get_doc(doctype, docname)
             if hasattr(doc, "validate_failed_payment"):
-                res = doc.validate_failed_payment(payment_details)
+                res = doc.validate_failed_payment(data)
                 if res:
                     response["message"] = res
                 else:
