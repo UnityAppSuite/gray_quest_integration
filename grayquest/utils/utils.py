@@ -58,10 +58,12 @@ def _get_student_payment_payload(controller, ref_doc, data):
     Constructs payload for Student/Guardian payments.
     """
     # Optimize student lookup - use cached values where possible
+    redirect_url = None
     if hasattr(ref_doc, "party_type") and hasattr(ref_doc, "party"):
         student = frappe.get_doc(ref_doc.party_type, ref_doc.party)
     elif ref_doc.doctype == "Student Applicant":
         student = ref_doc
+        redirect_url = ref_doc.get_payment_redirection_url()
     else:
         student = frappe.get_doc("Student", ref_doc.student)
 
@@ -81,7 +83,7 @@ def _get_student_payment_payload(controller, ref_doc, data):
             customer_details["customer_email"] = student.email_id
         if student.mobile:
             customer_mobile = student.mobile.replace("+91-", "").replace("+91", "")
-
+    url = redirect_url or get_url()
     payload = {
         "student_id": student.name,
         "customer_mobile": customer_mobile or student.student_mobile_number or "9999999999",
@@ -91,8 +93,8 @@ def _get_student_payment_payload(controller, ref_doc, data):
         "notes": get_notes(ref_doc, data),
         "udf_details": {"udf_1": ref_doc.doctype, "udf_2": ref_doc.name},
         "redirection": {
-            "success_url": f"{get_url()}/grayquest-payment",
-            "error_url": f"{get_url()}/grayquest-payment",
+            "success_url": f"{url}/grayquest-payment",
+            "error_url": f"{url}/grayquest-payment",
         },
     }
     return payload
