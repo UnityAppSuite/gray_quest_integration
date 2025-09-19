@@ -36,8 +36,8 @@ class GrayQuestSettings(Document):
         url = None
         try:
             url = self.generate_url(kwargs)
-        except Exception as e:
-            frappe.log_error(_(f"GrayQuest Payment Gateway Error: {str(e)}"), frappe.get_traceback())
+        except Exception:
+            frappe.log_error(_("GrayQuest Payment Gateway Error"), frappe.get_traceback())
             frappe.logger("grayquest").exception(frappe.get_traceback())
         return url
 
