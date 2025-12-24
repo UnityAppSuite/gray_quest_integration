@@ -286,7 +286,7 @@ def _get_student_applicant_payload(controller, ref_doc, data):
         },
         "student_details": _get_student_applicant_details(controller, applicant),
         "notes": get_notes(ref_doc, data),
-        "udf_details": {"udf_1": doctype, "udf_2": docname},
+        "udf_details": {"udf_1": doctype, "udf_2": docname, "udf_3": "one_time"},
         "redirection": {
             "success_url": f"{get_url()}/grayquest-payment",
             "error_url": f"{get_url()}/grayquest-payment",
