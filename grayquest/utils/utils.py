@@ -1,3 +1,5 @@
+import re
+
 import frappe
 from frappe.utils import flt, get_date_str, get_url
 
@@ -18,8 +20,12 @@ def get_payload(controller, data):
     doctype = data.get("reference_doctype")
     docname = data.get("reference_docname")
 
-    # Fetch the reference document only once
+    # Fetch the reference document only once (usually Payment Request)
     ref_doc = frappe.get_doc(doctype, docname)
+
+    # Handle Student Applicant payments via Payment Request
+    if hasattr(ref_doc, 'reference_doctype') and ref_doc.reference_doctype == "Student Applicant":
+        return _get_student_applicant_payload(controller, ref_doc, data)
 
     # Handle Ticket payments
     if doctype == "Ticket":
@@ -240,3 +246,111 @@ def get_notes(doc, data):
     if data.get("reference_docname"):
         notes["reference_docname"] = data.get("reference_docname")
     return notes
+
+
+def _get_student_applicant_payload(controller, ref_doc, data):
+    """
+    Constructs the payload for Student Applicant one-time fee payment.
+    This is for Payment Request with reference_doctype = Student Applicant.
+
+    Args:
+        controller: GrayQuest settings controller
+        ref_doc: Payment Request document
+        data: Original kwargs from get_payment_url
+
+    Returns:
+        dict: Payload for GrayQuest API
+    """
+    doctype = data.get("reference_doctype")
+    docname = data.get("reference_docname")
+
+    # Fetch the Student Applicant document
+    applicant = frappe.get_doc("Student Applicant", ref_doc.reference_name)
+
+    # Get and clean mobile number
+    raw_mobile = applicant.student_mobile_number or applicant.mobile or "9999999999"
+    customer_mobile = _clean_mobile_number(raw_mobile)
+
+    # Construct payload
+    payload = {
+        "student_id": applicant.name,
+        "customer_mobile": customer_mobile,
+        "fee_headers": {
+            "total_payable": flt(applicant.one_time_fee_amount or 0, 2),
+            "current_payable": flt(ref_doc.grand_total, 2),
+        },
+        "student_details": _get_student_applicant_details(controller, applicant),
+        "notes": get_notes(ref_doc, data),
+        "udf_details": {"udf_1": doctype, "udf_2": docname},
+        "redirection": {
+            "success_url": f"{get_url()}/grayquest-payment",
+            "error_url": f"{get_url()}/grayquest-payment",
+        },
+    }
+
+    return payload
+
+
+def _get_student_applicant_details(controller, applicant):
+    """
+    Constructs student details for Student Applicant.
+
+    Args:
+        controller: GrayQuest settings controller
+        applicant: Student Applicant document
+
+    Returns:
+        dict: Student details for GrayQuest API
+    """
+    student_details = {}
+
+    # Parse name from full name field
+    full_name = applicant.student_name or applicant.applicant_name or ""
+    name_parts = full_name.split() if full_name else []
+    if name_parts:
+        student_details["student_first_name"] = name_parts[0]
+        if len(name_parts) > 1:
+            student_details["student_last_name"] = " ".join(name_parts[1:])
+
+    # Student Applicant is always NEW
+    student_details["student_type"] = "NEW"
+
+    # Date of birth
+    if applicant.date_of_birth:
+        student_details["student_dob"] = get_date_str(applicant.date_of_birth)
+
+    # Gender
+    if applicant.gender:
+        student_details["student_gender"] = applicant.gender.upper()
+
+    # Email
+    if applicant.email_id:
+        student_details["student_email"] = applicant.email_id
+
+    # Program/Class ID
+    if controller.pass_class_id and applicant.program:
+        program_name = frappe.get_value("Program", applicant.program, "program_name") or applicant.program
+        sequence = frappe.get_value("Program", applicant.program, "sequence")
+        if program_name and str(program_name).isdigit():
+            student_details["student_class_id"] = int(program_name)
+        elif sequence:
+            student_details["student_class_id"] = int(sequence)
+
+    return student_details
+
+
+def _clean_mobile_number(mobile):
+    """
+    Clean mobile number to 10 digits for GrayQuest API.
+    Removes country code (+91, 91), dashes, spaces.
+
+    Args:
+        mobile: Raw mobile number string
+
+    Returns:
+        str: 10-digit mobile number
+    """
+    digits = re.sub(r'[^0-9]', '', str(mobile))
+    if len(digits) > 10:
+        digits = digits[-10:]
+    return digits
