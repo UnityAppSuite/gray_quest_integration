@@ -15,7 +15,8 @@ def handle_payment_gateway_webhook(data):
     Details:
         - If event is `dt.payment.order.created`, do nothing
         - If event is `dt.payment.captured`, update application code and call on_payment_authorized
-        - the udf_details contains `Rayment Request` doctype and docname
+        - the udf_details contains `Payment Request` doctype and docname
+        - If fee_type is `one_time`, call validate_one_time_payment on Student Applicant
     """
     try:
         if data.get("event") == "dt.payment.captured":
@@ -24,6 +25,7 @@ def handle_payment_gateway_webhook(data):
             # Get doctype and docname from udf_details
             doctype = udf_details.get("udf_1")
             docname = udf_details.get("udf_2")
+            fee_type = udf_details.get("udf_3")
             # Extract application details from the data
             application_details = data.get("application_details")
             # Get application code from application details
@@ -40,14 +42,25 @@ def handle_payment_gateway_webhook(data):
                 doc.db_set("paid_amount", amount)
             # Call the on_payment_authorized method on the document
             if payment_details.get("status") == "PAID":
-                if doc.doctype == "Payment Request":
+                # Route based on fee_type for one-time payments
+                if fee_type == "one_time" and hasattr(doc, "reference_doctype") and doc.reference_doctype == "Student Applicant":
+                    # Get Student Applicant and call validate_one_time_payment
+                    applicant = frappe.get_doc("Student Applicant", doc.reference_name)
+                    payment_data = {
+                        "amount": doc.grand_total,
+                        "transaction_id": application_code,
+                    }
+                    applicant.validate_one_time_payment(data=payment_data, payment_mode="Online")
+                    response["message"] = _("One Time Fee Payment Captured")
+                elif doc.doctype == "Payment Request":
                     doc.on_payment_authorized(status="Completed")
+                    response["message"] = _("Payment successfully captured and processed.")
                 else:
                     if hasattr(doc, "validate_payment"):
                         doc.validate_payment(payment_details)
                     else:
                         create_payment_entry(doc, amount=amount, transaction_id=application_code)
-            response["message"] = _("Payment successfully captured and processed.")
+                    response["message"] = _("Payment successfully captured and processed.")
 
         elif data.get("event") == "dt.payment.order.created":
             udf_details = data.get("udf_details", {})
