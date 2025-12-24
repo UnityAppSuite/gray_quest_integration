@@ -264,7 +264,12 @@ def _get_student_applicant_payload(controller, ref_doc, data):
     doctype = data.get("reference_doctype")
     docname = data.get("reference_docname")
 
-    # Fetch the Student Applicant document
+    # Fetch the Student Applicant document with existence check
+    if not frappe.db.exists("Student Applicant", ref_doc.reference_name):
+        frappe.throw(
+            f"Student Applicant '{ref_doc.reference_name}' not found for Payment Request '{ref_doc.name}'",
+            title="Student Applicant Not Found"
+        )
     applicant = frappe.get_doc("Student Applicant", ref_doc.reference_name)
 
     # Get and clean mobile number
@@ -348,9 +353,12 @@ def _clean_mobile_number(mobile):
         mobile: Raw mobile number string
 
     Returns:
-        str: 10-digit mobile number
+        str: 10-digit mobile number, or default if invalid
     """
     digits = re.sub(r'[^0-9]', '', str(mobile))
     if len(digits) > 10:
         digits = digits[-10:]
+    if len(digits) < 10:
+        # Invalid mobile number - use default to not block payment flow
+        digits = "9999999999"
     return digits
