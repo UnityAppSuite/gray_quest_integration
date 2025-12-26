@@ -4,6 +4,25 @@ import frappe
 from frappe.utils import flt, get_date_str, get_url
 
 
+def build_callback_url(payment_request):
+    """
+    Build callback URL for GrayQuest redirect after payment.
+
+    Args:
+        payment_request: Payment Request docname
+
+    Returns:
+        str: Callback URL with payment_request parameter
+
+    Note: We only pass payment_request to keep URL simple.
+    The callback handler will look up the return_url from the Payment Request.
+    """
+    base_url = get_url()
+    # Keep URL simple - only pass payment_request
+    # The callback handler will build return_url from payment_hash
+    return f"{base_url}/api/method/grayquest.api.handle_payment_callback?payment_request={payment_request}"
+
+
 def get_payload(controller, data):
     """
     Constructs the payload for a payment request.
@@ -276,6 +295,9 @@ def _get_student_applicant_payload(controller, ref_doc, data):
     raw_mobile = applicant.student_mobile_number or applicant.mobile or "9999999999"
     customer_mobile = _clean_mobile_number(raw_mobile)
 
+    # Build callback URL (simple - just payment_request)
+    callback_url = build_callback_url(docname)
+
     # Build customer details from applicant (no guardian for applicants)
     customer_details = _get_student_applicant_customer_details(applicant)
 
@@ -292,8 +314,8 @@ def _get_student_applicant_payload(controller, ref_doc, data):
         "notes": get_notes(ref_doc, data),
         "udf_details": {"udf_1": doctype, "udf_2": docname, "udf_3": "one_time"},
         "redirection": {
-            "success_url": f"{get_url()}/grayquest-payment",
-            "error_url": f"{get_url()}/grayquest-payment",
+            "success_url": callback_url,
+            "error_url": callback_url,
         },
     }
 
