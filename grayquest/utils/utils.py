@@ -108,7 +108,18 @@ def _get_student_payment_payload(controller, ref_doc, data):
             customer_details["customer_email"] = student.email_id
         if student.mobile:
             customer_mobile = student.mobile.replace("+91-", "").replace("+91", "")
-    url = redirect_url or get_url()
+
+    # Build redirection URLs
+    # For web form payments (direct Student Applicant), use callback to mark payment as paid
+    if ref_doc.doctype == "Student Applicant" and data.get("redirect_to"):
+        callback_url = _build_application_fees_callback_url(ref_doc.name, data.get("redirect_to"))
+        redirection = {"success_url": callback_url, "error_url": callback_url}
+        udf_3 = "application_fee"
+    else:
+        url = redirect_url or get_url()
+        redirection = {"success_url": f"{url}/grayquest-payment", "error_url": f"{url}/grayquest-payment"}
+        udf_3 = None
+
     payload = {
         "student_id": student.name,
         "customer_mobile": customer_mobile or student.student_mobile_number or "9999999999",
@@ -116,13 +127,17 @@ def _get_student_payment_payload(controller, ref_doc, data):
         "student_details": get_student_details(controller, student),
         "customer_details": customer_details,
         "notes": get_notes(ref_doc, data),
-        "udf_details": {"udf_1": ref_doc.doctype, "udf_2": ref_doc.name},
-        "redirection": {
-            "success_url": f"{url}/grayquest-payment",
-            "error_url": f"{url}/grayquest-payment",
-        },
+        "udf_details": {"udf_1": ref_doc.doctype, "udf_2": ref_doc.name, "udf_3": udf_3},
+        "redirection": redirection,
     }
     return payload
+
+
+def _build_application_fees_callback_url(student_applicant, redirect_to):
+    """Build callback URL for application fees payment."""
+    from urllib.parse import quote
+    base_url = get_url()
+    return f"{base_url}/api/method/grayquest.api.handle_application_fees_callback?student_applicant={student_applicant}&redirect_to={quote(redirect_to)}"
 
 
 def get_student_details(controller, student):

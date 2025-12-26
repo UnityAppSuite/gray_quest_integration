@@ -109,3 +109,65 @@ def _handle_student_applicant_one_time_fee_callback(pr_doc, transaction_id: str)
     else:
         # Standard flow for other Student Applicant payments (not one-time fee)
         pr_doc.on_payment_authorized(status="Completed")
+
+
+@frappe.whitelist(allow_guest=True)
+def handle_application_fees_callback(**kwargs):
+    """
+    Handle redirect from GrayQuest after application fees payment.
+
+    This is for web form payments where Student Applicant is the direct reference
+    (no Payment Request involved).
+    """
+    from urllib.parse import unquote
+    from frappe.utils import flt
+
+    try:
+        student_applicant = kwargs.get("student_applicant")
+        redirect_to = unquote(kwargs.get("redirect_to", "/"))
+        status = kwargs.get("status", "").lower()
+        application_code = kwargs.get("application_code")
+
+        # Clean student_applicant (GrayQuest may append ?entity=direct)
+        if student_applicant and "?" in student_applicant:
+            student_applicant = student_applicant.split("?")[0]
+
+        # Validate student_applicant exists
+        if not student_applicant or not frappe.db.exists("Student Applicant", student_applicant):
+            frappe.local.response["type"] = "redirect"
+            frappe.local.response["location"] = redirect_to
+            return
+
+        # Skip if already paid
+        if frappe.db.get_value("Student Applicant", student_applicant, "paid"):
+            frappe.local.response["type"] = "redirect"
+            frappe.local.response["location"] = redirect_to
+            return
+
+        # Process payment if successful
+        if status == "success" and application_code:
+            applicant = frappe.get_doc("Student Applicant", student_applicant)
+            application_fees = flt(applicant.application_fees)
+
+            payment_data = {
+                "amount": application_fees,
+                "transaction_id": application_code,
+            }
+
+            # Call validate_payment to mark as paid
+            if hasattr(applicant, 'validate_payment'):
+                applicant.validate_payment(data=payment_data, payment_mode="Online")
+            else:
+                # Fallback: manually mark as paid
+                applicant.db_set("paid", 1)
+                applicant.db_set("paid_amount", application_fees)
+
+            frappe.db.commit()
+
+        frappe.local.response["type"] = "redirect"
+        frappe.local.response["location"] = redirect_to
+
+    except Exception:
+        frappe.log_error(title="GrayQuest App Fees Callback Error", message=frappe.get_traceback())
+        frappe.local.response["type"] = "redirect"
+        frappe.local.response["location"] = kwargs.get("redirect_to", "/")
