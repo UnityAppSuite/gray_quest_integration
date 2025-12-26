@@ -17,6 +17,7 @@ def handle_payment_gateway_webhook(data):
         - If event is `dt.payment.captured`, update application code and call on_payment_authorized
         - the udf_details contains `Payment Request` doctype and docname
         - If fee_type is `one_time`, call validate_one_time_payment on Student Applicant
+        - If payment was already processed via callback, just acknowledge the webhook
     """
     try:
         if data.get("event") == "dt.payment.captured":
@@ -30,6 +31,15 @@ def handle_payment_gateway_webhook(data):
             application_details = data.get("application_details")
             # Get application code from application details
             application_code = application_details.get("code")
+
+            # Check if already paid via callback - avoid re-processing
+            current_status = db.get_value(doctype, docname, "status")
+            if current_status == "Paid":
+                # Already processed via callback - just acknowledge webhook
+                response["message"] = _("Payment already processed via callback")
+                return
+
+            # Not yet paid - process via webhook (existing behavior)
             # Fetch the document using doctype and docname
             doc = get_doc(doctype, docname)
             # Get payment details from the data
