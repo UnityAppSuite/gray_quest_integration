@@ -118,8 +118,8 @@ def _get_student_payment_payload(controller, ref_doc, data):
         "notes": get_notes(ref_doc, data),
         "udf_details": {"udf_1": ref_doc.doctype, "udf_2": ref_doc.name},
         "redirection": {
-            "success_url": f"{url}/grayquest-payment",
-            "error_url": f"{url}/grayquest-payment",
+            "success_url": data.get("success_url") or f"{url}/grayquest-payment",
+            "error_url": data.get("failure_url") or f"{url}/grayquest-payment",
         },
     }
     return payload
