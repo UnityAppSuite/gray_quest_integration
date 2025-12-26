@@ -55,7 +55,14 @@ def handle_payment_callback(**kwargs):
         if status == "success" and application_code:
             frappe.db.set_value("Payment Request", payment_request, "transaction_id", application_code)
             doc = frappe.get_doc("Payment Request", payment_request)
-            doc.on_payment_authorized(status="Completed")
+
+            # Check if this is Student Applicant - handle one-time fee payment
+            if doc.reference_doctype == "Student Applicant":
+                _handle_student_applicant_one_time_fee_callback(doc, application_code)
+            else:
+                # Standard flow for other reference doctypes
+                doc.on_payment_authorized(status="Completed")
+
             frappe.db.commit()
 
         frappe.local.response["type"] = "redirect"
@@ -65,3 +72,40 @@ def handle_payment_callback(**kwargs):
         frappe.log_error(title="GrayQuest Callback Error", message=frappe.get_traceback())
         frappe.local.response["type"] = "redirect"
         frappe.local.response["location"] = "/"
+
+
+def _handle_student_applicant_one_time_fee_callback(pr_doc, transaction_id: str):
+    """
+    Handle one-time fee payment for Student Applicant via callback.
+
+    Checks if the payment is for one-time fee (amount matches one_time_fee_amount)
+    and routes to validate_one_time_payment. Otherwise, uses standard flow.
+
+    Args:
+        pr_doc: Payment Request document
+        transaction_id (str): GrayQuest transaction ID (application_code)
+    """
+    from frappe.utils import flt
+
+    # Get Student Applicant document
+    applicant = frappe.get_doc("Student Applicant", pr_doc.reference_name)
+    payment_amount = flt(pr_doc.grand_total)
+    one_time_fee = flt(getattr(applicant, 'one_time_fee_amount', 0))
+
+    # Prepare payment data
+    payment_data = {
+        "amount": payment_amount,
+        "transaction_id": transaction_id,
+    }
+
+    # Check if this is one-time fee payment (amount matches one_time_fee_amount)
+    if one_time_fee > 0 and payment_amount == one_time_fee:
+        # One-time fee payment - call validate_one_time_payment
+        if hasattr(applicant, 'validate_one_time_payment'):
+            applicant.validate_one_time_payment(data=payment_data, payment_mode="Online")
+        else:
+            # Fallback to standard flow if method doesn't exist
+            pr_doc.on_payment_authorized(status="Completed")
+    else:
+        # Standard flow for other Student Applicant payments (not one-time fee)
+        pr_doc.on_payment_authorized(status="Completed")
