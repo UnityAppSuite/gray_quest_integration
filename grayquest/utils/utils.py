@@ -276,6 +276,9 @@ def _get_student_applicant_payload(controller, ref_doc, data):
     raw_mobile = applicant.student_mobile_number or applicant.mobile or "9999999999"
     customer_mobile = _clean_mobile_number(raw_mobile)
 
+    # Build customer details from applicant (no guardian for applicants)
+    customer_details = _get_student_applicant_customer_details(applicant)
+
     # Construct payload
     payload = {
         "student_id": applicant.name,
@@ -285,6 +288,7 @@ def _get_student_applicant_payload(controller, ref_doc, data):
             "current_payable": flt(ref_doc.grand_total, 2),
         },
         "student_details": _get_student_applicant_details(controller, applicant),
+        "customer_details": customer_details,
         "notes": get_notes(ref_doc, data),
         "udf_details": {"udf_1": doctype, "udf_2": docname, "udf_3": "one_time"},
         "redirection": {
@@ -342,6 +346,52 @@ def _get_student_applicant_details(controller, applicant):
             student_details["student_class_id"] = int(sequence)
 
     return student_details
+
+
+def _get_student_applicant_customer_details(applicant):
+    """
+    Constructs customer details for Student Applicant.
+    Since Student Applicant doesn't have a guardian linked,
+    we use the applicant's own details or parent/guardian fields if available.
+
+    Args:
+        applicant: Student Applicant document
+
+    Returns:
+        dict: Customer details for GrayQuest API
+    """
+    customer_details = {}
+
+    # Try to get guardian/parent name from applicant
+    # Check common field names for parent/guardian info
+    guardian_name = (
+        getattr(applicant, 'guardian_name', None) or
+        getattr(applicant, 'father_name', None) or
+        getattr(applicant, 'mother_name', None) or
+        getattr(applicant, 'parent_name', None) or
+        applicant.student_name or
+        applicant.applicant_name or
+        ""
+    )
+
+    if guardian_name:
+        name_parts = guardian_name.split() if guardian_name else []
+        if name_parts:
+            customer_details["customer_first_name"] = name_parts[0]
+            if len(name_parts) > 1:
+                customer_details["customer_last_name"] = " ".join(name_parts[1:])
+
+    # Try to get email
+    customer_email = (
+        getattr(applicant, 'guardian_email', None) or
+        getattr(applicant, 'parent_email', None) or
+        applicant.email_id or
+        ""
+    )
+    if customer_email:
+        customer_details["customer_email"] = customer_email
+
+    return customer_details
 
 
 def _clean_mobile_number(mobile):
