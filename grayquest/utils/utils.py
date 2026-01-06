@@ -1,4 +1,5 @@
 import re
+import json
 
 import frappe
 from frappe.utils import flt, get_date_str, get_url
@@ -219,6 +220,10 @@ def get_fee_headers(doc, data):
 
     doctype = getattr(doc, "reference_doctype", doc.doctype)
 
+    # Special handling for Ticket with participating students
+    if doctype == "Ticket":
+        return _get_ticket_fee_headers(doc, data)
+
     if doctype in doctype_fields:
         total_field, current_field = doctype_fields[doctype]
 
@@ -237,6 +242,159 @@ def get_fee_headers(doc, data):
     else:
         amount = data.get("amount", 0)
         return {"total_payable": flt(amount, 2), "current_payable": flt(amount, 2)}
+
+
+def _get_ticket_fee_headers(ticket_doc, data):
+    """
+    Generate fee headers for Ticket based on participating students.
+    Uses configurable fee_header from Event Listing grade_details.
+    Only returns numeric values (required by payment gateway).
+
+    Args:
+        ticket_doc (Document): Ticket document
+        data (dict): Additional data containing amount information
+
+    Returns:
+        dict: Fee headers with numeric values only
+    """
+    # Base headers (always present)
+    base_headers = {
+        "total_payable": flt(ticket_doc.amount_after_discount or 0, 2),
+        "current_payable": flt(ticket_doc.amount_after_discount or 0, 2)
+    }
+
+    # Try to get participating students
+    students_json = ticket_doc.get("custom_participating_students_json")
+    if not students_json:
+        return base_headers  # Fallback
+
+    try:
+        students = json.loads(students_json) if isinstance(students_json, str) else students_json
+    except (json.JSONDecodeError, TypeError):
+        frappe.log_error(
+            f"Invalid participating students JSON in Ticket {ticket_doc.name}",
+            "Ticket Fee Headers Error"
+        )
+        return base_headers  # Fallback
+
+    if not students or len(students) == 0:
+        return base_headers  # Fallback
+
+    # Get event to access grade_details
+    event = frappe.get_doc("Event Listing", ticket_doc.event)
+
+    # Get selected payment gateway from ticket
+    selected_gateway = ticket_doc.custom_selected_payment_gateway
+    selected_gateway_name = ticket_doc.custom_selected_payment_gateway_name
+
+    # Multiple students - check if same grade
+    grades = set(s.get("program") for s in students)
+
+    # Scenario 1 & 2: Single student or Same grade siblings
+    if len(grades) == 1:
+        grade = list(grades)[0]
+        # Find fee_header for this grade and payment gateway
+        fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
+
+        if fee_header_name:
+            base_headers[fee_header_name] = base_headers["current_payable"]
+
+        return base_headers
+
+    # Scenario 3: Different grade siblings
+    students_by_grade = {}
+    for student in students:
+        grade = student.get("program")
+        if grade not in students_by_grade:
+            students_by_grade[grade] = []
+        students_by_grade[grade].append(student)
+
+    grade_breakdown = _calculate_grade_breakdown(ticket_doc, students_by_grade)
+
+    # Add each grade's amount using its fee_header
+    for grade, amount in grade_breakdown.items():
+        fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
+        if fee_header_name:
+            base_headers[fee_header_name] = amount
+
+    return base_headers
+
+
+def _get_fee_header_for_grade(event, grade, payment_gateway, payment_gateway_name):
+    """
+    Get the configured fee_header for a specific grade and payment gateway.
+
+    Args:
+        event (Document): Event Listing document
+        grade (str): Grade/Program name
+        payment_gateway (str): Payment gateway DocType name
+        payment_gateway_name (str): Payment gateway instance name
+
+    Returns:
+        str: Fee header name or None
+    """
+    if not hasattr(event, 'grade_details') or not event.grade_details:
+        return None
+
+    for grade_detail in event.grade_details:
+        if (grade_detail.grade == grade and
+            grade_detail.payment_gateway == payment_gateway and
+            grade_detail.payment_gateway_name == payment_gateway_name):
+            return grade_detail.fee_header
+
+    return None
+
+
+def _calculate_grade_breakdown(ticket_doc, students_by_grade):
+    """
+    Calculate per-grade fee amounts.
+
+    Args:
+        ticket_doc (Document): Ticket document
+        students_by_grade (dict): Dict mapping grade -> list of student objects
+
+    Returns:
+        dict: Dict mapping grade -> amount
+    """
+    # Get event to access student fee
+    event = frappe.get_doc("Event Listing", ticket_doc.event)
+    student_fee_per_student = event.student_fee or 0
+
+    total_seat_charges = ticket_doc.custom_seat_pricing_total or 0
+
+    grade_breakdown = {}
+
+    for grade, students in students_by_grade.items():
+        # Student fees for this grade
+        grade_student_count = len(students)
+        grade_student_fees = grade_student_count * student_fee_per_student
+
+        # Seat charges - proportional distribution
+        # Get total seats allocated to students of this grade
+        grade_seat_count = 0
+        for student in students:
+            student_id = student.get("student")
+            # Count allocated seats for this student
+            student_seat_count = frappe.db.count("Ticket Seat", {
+                "parent": ticket_doc.name,
+                "allocated_student": student_id
+            })
+            grade_seat_count += student_seat_count
+
+        total_seats = ticket_doc.custom_free_seats_count + ticket_doc.custom_chargeable_seats_count
+
+        # Proportional seat charges
+        if total_seats > 0:
+            grade_seat_proportion = grade_seat_count / total_seats
+            grade_seat_charges = total_seat_charges * grade_seat_proportion
+        else:
+            grade_seat_charges = 0
+
+        # Total for this grade
+        grade_total = grade_student_fees + grade_seat_charges
+        grade_breakdown[grade] = flt(grade_total, 2)
+
+    return grade_breakdown
 
 
 def get_notes(doc, data):
