@@ -1,5 +1,4 @@
 import re
-import json
 
 import frappe
 from frappe.utils import flt, get_date_str, get_url
@@ -246,7 +245,7 @@ def get_fee_headers(doc, data):
 
 def _get_ticket_fee_headers(ticket_doc, data):
     """
-    Generate fee headers for Ticket based on participating students.
+    Generate fee headers for Ticket based on participating students from seats.
     Uses configurable fee_header from Event Listing grade_details.
     Only returns numeric values (required by payment gateway).
 
@@ -263,22 +262,23 @@ def _get_ticket_fee_headers(ticket_doc, data):
         "current_payable": flt(ticket_doc.amount_after_discount or 0, 2)
     }
 
-    # Try to get participating students
-    students_json = ticket_doc.get("custom_participating_students_json")
-    if not students_json:
+    # Get participating students from seats (unique students with allocated seats)
+    if not hasattr(ticket_doc, 'seats') or not ticket_doc.seats:
         return base_headers  # Fallback
 
-    try:
-        students = json.loads(students_json) if isinstance(students_json, str) else students_json
-    except (json.JSONDecodeError, TypeError):
-        frappe.log_error(
-            f"Invalid participating students JSON in Ticket {ticket_doc.name}",
-            "Ticket Fee Headers Error"
-        )
-        return base_headers  # Fallback
+    # Extract unique students and their grades from seats
+    students_by_grade = {}
+    for seat in ticket_doc.seats:
+        if seat.allocated_student and seat.student_grade:
+            grade = seat.student_grade
+            student_id = seat.allocated_student
 
-    if not students or len(students) == 0:
-        return base_headers  # Fallback
+            if grade not in students_by_grade:
+                students_by_grade[grade] = set()
+            students_by_grade[grade].add(student_id)
+
+    if not students_by_grade:
+        return base_headers  # Fallback - no students with grades
 
     # Get event to access grade_details
     event = frappe.get_doc("Event Listing", ticket_doc.event)
@@ -287,12 +287,12 @@ def _get_ticket_fee_headers(ticket_doc, data):
     selected_gateway = ticket_doc.custom_selected_payment_gateway
     selected_gateway_name = ticket_doc.custom_selected_payment_gateway_name
 
-    # Multiple students - check if same grade
-    grades = set(s.get("program") for s in students)
+    # Check if all students are in same grade
+    unique_grades = list(students_by_grade.keys())
 
     # Scenario 1 & 2: Single student or Same grade siblings
-    if len(grades) == 1:
-        grade = list(grades)[0]
+    if len(unique_grades) == 1:
+        grade = unique_grades[0]
         # Find fee_header for this grade and payment gateway
         fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
 
@@ -302,14 +302,13 @@ def _get_ticket_fee_headers(ticket_doc, data):
         return base_headers
 
     # Scenario 3: Different grade siblings
-    students_by_grade = {}
-    for student in students:
-        grade = student.get("program")
-        if grade not in students_by_grade:
-            students_by_grade[grade] = []
-        students_by_grade[grade].append(student)
+    # Convert sets to lists for calculation
+    students_by_grade_list = {
+        grade: [{"student": student_id} for student_id in students]
+        for grade, students in students_by_grade.items()
+    }
 
-    grade_breakdown = _calculate_grade_breakdown(ticket_doc, students_by_grade)
+    grade_breakdown = _calculate_grade_breakdown(ticket_doc, students_by_grade_list)
 
     # Add each grade's amount using its fee_header
     for grade, amount in grade_breakdown.items():
