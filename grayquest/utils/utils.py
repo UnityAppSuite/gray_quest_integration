@@ -64,7 +64,7 @@ def _get_event_ticket_payload(ticket_doc, data):
     surl = data.get("success_url")
     furl = data.get("failure_url")
     payload = {
-        "student_id": guardian.guardian_name,
+        "student_id": guardian.name,
         "customer_mobile": guardian.mobile_number or "9999999999",
         "customer_details": get_customer_details(guardian),
         "fee_headers": get_fee_headers(ticket_doc, data),
@@ -256,7 +256,7 @@ def _get_ticket_fee_headers(ticket_doc, data):
     Returns:
         dict: Fee headers with numeric values only
     """
-    # Base headers (always present)
+    # Base headers for fallback only
     base_headers = {
         "total_payable": flt(ticket_doc.amount_after_discount or 0, 2),
         "current_payable": flt(ticket_doc.amount_after_discount or 0, 2)
@@ -297,8 +297,10 @@ def _get_ticket_fee_headers(ticket_doc, data):
         fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
 
         if fee_header_name:
-            base_headers[fee_header_name] = base_headers["current_payable"]
+            # Return only the specific fee header, not total/current payable
+            return {fee_header_name: base_headers["current_payable"]}
 
+        # Fallback if no fee_header found
         return base_headers
 
     # Scenario 3: Different grade siblings
@@ -310,12 +312,23 @@ def _get_ticket_fee_headers(ticket_doc, data):
 
     grade_breakdown = _calculate_grade_breakdown(ticket_doc, students_by_grade_list)
 
-    # Add each grade's amount using its fee_header
+    # Build fee headers with grade-specific headers only
+    fee_headers = {}
+    has_fee_headers = False
+
     for grade, amount in grade_breakdown.items():
         fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
         if fee_header_name:
-            base_headers[fee_header_name] = amount
+            fee_headers[fee_header_name] = amount
+            has_fee_headers = True
 
+    # If we successfully added fee headers, return them without total/current payable
+    if has_fee_headers:
+        print("Base Header:", fee_headers)
+        return fee_headers
+
+    # Fallback if no fee headers could be determined
+    print("Base Header:", base_headers)
     return base_headers
 
 

@@ -41,11 +41,15 @@ class GrayQuestSettings(Document):
             frappe.logger("grayquest").exception(frappe.get_traceback())
         return url
 
-    def generate_url(self, kwargs):
+    def generate_url(self,kwargs):
         headers = self.get_headers()
         payload = get_payload(self, kwargs)
         api_url = self.api_url.strip("/")
-        endpoint = f"{api_url}/v1/pp/redirect/{self.slug}"
+        slug = self.slug
+        if kwargs.get("event", False):
+            slug = self.event_slug
+        print("Payload", payload)
+        endpoint = f"{api_url}/v1/pp/redirect/{slug}"
 
         response = requests.post(endpoint, headers=headers, json=payload)
         if response.status_code == 201:
