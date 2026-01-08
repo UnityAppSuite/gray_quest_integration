@@ -324,11 +324,9 @@ def _get_ticket_fee_headers(ticket_doc, data):
 
     # If we successfully added fee headers, return them without total/current payable
     if has_fee_headers:
-        print("Base Header:", fee_headers)
         return fee_headers
 
     # Fallback if no fee headers could be determined
-    print("Base Header:", base_headers)
     return base_headers
 
 

@@ -48,7 +48,6 @@ class GrayQuestSettings(Document):
         slug = self.slug
         if kwargs.get("event", False):
             slug = self.event_slug
-        print("Payload", payload)
         endpoint = f"{api_url}/v1/pp/redirect/{slug}"
 
         response = requests.post(endpoint, headers=headers, json=payload)
