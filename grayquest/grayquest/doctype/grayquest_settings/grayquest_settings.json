@@ -11,6 +11,7 @@
   "gateway_name",
   "api_url",
   "slug",
+  "event_slug",
   "pass_class_id",
   "column_break_ssba",
   "client_id",
@@ -68,10 +69,16 @@
    "fieldname": "pass_class_id",
    "fieldtype": "Check",
    "label": "Pass Class ID"
+  },
+  {
+   "fieldname": "event_slug",
+   "fieldtype": "Data",
+   "label": "Event Slug",
+   "reqd": 1
   }
  ],
  "links": [],
- "modified": "2025-01-09 15:50:05.122006",
+ "modified": "2026-01-08 15:40:03.033770",
  "modified_by": "Administrator",
  "module": "GrayQuest",
  "name": "GrayQuest Settings",
@@ -90,6 +97,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
