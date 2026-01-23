@@ -7,7 +7,7 @@ from grayquest.utils import EMI_STATUS_MAPPING
 
 def handle_payment_gateway_webhook(data):
     """
-    Handle Payment Gateway Webhook
+    Handle Payment Gateway Webhook - supports both Payment Request and direct Fees
 
     Args:
         data (dict): Webhook data
@@ -15,7 +15,8 @@ def handle_payment_gateway_webhook(data):
     Details:
         - If event is `dt.payment.order.created`, do nothing
         - If event is `dt.payment.captured`, update application code and call on_payment_authorized
-        - the udf_details contains `Payment Request` doctype and docname
+        - the udf_details contains `Payment Request` doctype and docname (legacy)
+        - OR udf_details contains `Fees` or `Student Applicant` doctype for direct payments
         - If fee_type is `one_time`, call validate_one_time_payment on Student Applicant
         - If payment was already processed via callback, just acknowledge the webhook
     """
@@ -26,25 +27,48 @@ def handle_payment_gateway_webhook(data):
             # Get doctype and docname from udf_details
             doctype = udf_details.get("udf_1")
             docname = udf_details.get("udf_2")
-            fee_type = udf_details.get("udf_3")
+            payment_term = udf_details.get("udf_3")
             # Extract application details from the data
             application_details = data.get("application_details")
             # Get application code from application details
             application_code = application_details.get("code")
-
-            # Check if already paid via callback - avoid re-processing
-            current_status = db.get_value(doctype, docname, "status")
-            if current_status == "Paid":
-                # Already processed via callback - just acknowledge webhook
-                response["message"] = _("Payment already processed via callback")
-                return
-
-            # Not yet paid - process via webhook (existing behavior)
-            # Fetch the document using doctype and docname
-            doc = get_doc(doctype, docname)
             # Get payment details from the data
             payment_details = data.get("payment_details", {})
             amount = payment_details.get("amount")
+
+            # Check if already paid - avoid re-processing
+            if doctype == "Payment Request":
+                current_status = db.get_value(doctype, docname, "status")
+                if current_status == "Paid":
+                    # Already processed via callback - just acknowledge webhook
+                    response["message"] = _("Payment already processed via callback")
+                    return
+
+            # Fetch the document using doctype and docname
+            doc = get_doc(doctype, docname)
+
+            # Handle direct Fees payment (new flow like Easebuzz)
+            if doctype == "Fees" and payment_details.get("status") == "PAID":
+                doc.on_payment_authorized(
+                    status="Completed",
+                    payment_term=payment_term,
+                    transaction_id=application_code,
+                    amount=amount
+                )
+                response["message"] = _("Fee payment processed successfully")
+                return
+
+            # Handle direct Student Applicant payment
+            if doctype == "Student Applicant" and payment_details.get("status") == "PAID":
+                result = doc.on_payment_authorized(
+                    status="Completed",
+                    transaction_id=application_code,
+                    amount=amount
+                )
+                response["message"] = result.get("message") if result else _("Applicant payment processed")
+                return
+
+            # Existing Payment Request flow (keep for backward compatibility)
             # Update the transaction_id field in the document
             if hasattr(doc, "transaction_id"):
                 doc.db_set("transaction_id", application_code)
@@ -52,8 +76,8 @@ def handle_payment_gateway_webhook(data):
                 doc.db_set("paid_amount", amount)
             # Call the on_payment_authorized method on the document
             if payment_details.get("status") == "PAID":
-                # Route based on fee_type for one-time payments
-                if fee_type == "one_time" and hasattr(doc, "reference_doctype") and doc.reference_doctype == "Student Applicant":
+                # Route based on payment_term for one-time payments
+                if payment_term == "one_time" and hasattr(doc, "reference_doctype") and doc.reference_doctype == "Student Applicant":
                     # Get Student Applicant and call validate_one_time_payment
                     applicant = frappe.get_doc("Student Applicant", doc.reference_name)
                     payment_data = {

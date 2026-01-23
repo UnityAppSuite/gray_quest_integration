@@ -107,3 +107,141 @@ class GrayQuestSettings(Document):
         else:
             frappe.log_error(_("GrayQuest Payment Gateway Error"), res.json())
             response["message"] = res.json()
+
+    def _request_payment_url(self, payload, context="Payment"):
+        """
+        Make API request to GrayQuest and return payment URL.
+
+        Args:
+            payload: Request payload dict
+            context: Context string for error logging (e.g., "Fees", "Applicant")
+
+        Returns:
+            str: Payment URL from GrayQuest API
+
+        Raises:
+            frappe.ValidationError: When API call fails
+        """
+        headers = self.get_headers()
+        if not headers:
+            frappe.throw("GrayQuest API credentials are not configured properly")
+
+        api_url = self.api_url.strip("/")
+        endpoint = f"{api_url}/v1/pp/redirect/{self.slug}"
+
+        try:
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+
+            try:
+                response_data = response.json()
+            except ValueError:
+                frappe.log_error(
+                    title=f"GrayQuest {context} Invalid Response",
+                    message=f"Status: {response.status_code}\nResponse: {response.text[:500]}"
+                )
+                frappe.throw(f"GrayQuest returned invalid response (Status: {response.status_code})")
+
+            if response.status_code == 201:
+                url = response_data.get("data", {}).get("redirection_url")
+                if url:
+                    return url
+                frappe.throw("GrayQuest API did not return a payment URL")
+
+            error_msg = response_data.get("message") or response_data.get("error") or str(response_data)
+            frappe.log_error(
+                title=f"GrayQuest {context} URL Error",
+                message=f"Status: {response.status_code}\nResponse: {response_data}"
+            )
+            frappe.throw(f"GrayQuest API Error: {error_msg}")
+
+        except requests.exceptions.Timeout:
+            frappe.log_error("GrayQuest API Timeout", f"Endpoint: {endpoint}")
+            frappe.throw("GrayQuest API request timed out. Please try again.")
+        except requests.exceptions.RequestException as e:
+            frappe.log_error("GrayQuest API Connection Error", frappe.get_traceback())
+            frappe.throw(f"Failed to connect to GrayQuest: {str(e)}")
+
+    def generate_payment_url(self, **kwargs):
+        """Generate payment URL for direct Fees payment."""
+        from grayquest.utils import get_fees_payload
+        payload = get_fees_payload(self, kwargs)
+        return self._request_payment_url(payload, context="Fees")
+
+    def get_payment_url_applicant(self, **kwargs):
+        """Generate payment URL for Student Applicant deposit payment."""
+        from grayquest.utils import get_applicant_payload_direct
+        payload = get_applicant_payload_direct(kwargs)
+        return self._request_payment_url(payload, context="Applicant")
+
+    def handle_response(self, data):
+        """
+        Handle payment response from GrayQuest success page (like Easebuzz handle_response).
+
+        Extracts udf_details and calls appropriate on_payment_authorized method.
+
+        Args:
+            data: Response data from GrayQuest containing:
+                - udf_details: {udf_1: doctype, udf_2: docname, udf_3: payment_term or "applicant"}
+                - application_details: {code: transaction_id}
+                - payment_details: {status: "PAID", amount: amount}
+
+        Returns:
+            dict: Result message
+        """
+        from frappe.auth import LoginManager
+
+        try:
+            login_manager = LoginManager()
+            login_manager.login_as("Administrator")
+
+            # Extract data
+            udf_details = data.get("udf_details", {})
+            doctype = udf_details.get("udf_1")
+            docname = udf_details.get("udf_2")
+            payment_term = udf_details.get("udf_3")
+
+            application_details = data.get("application_details", {})
+            transaction_id = application_details.get("code")
+
+            payment_details = data.get("payment_details", {})
+            status = payment_details.get("status")
+            amount = payment_details.get("amount")
+
+            if status != "PAID":
+                return {"message": "Payment not completed"}
+
+            if not frappe.db.exists(doctype, docname):
+                frappe.log_error(f"GrayQuest: {doctype} {docname} does not exist")
+                return {"message": "Document not found"}
+
+            doc = frappe.get_doc(doctype, docname, ignore_permissions=True)
+
+            if doctype == "Fees":
+                doc.on_payment_authorized(
+                    status="Completed",
+                    payment_term=payment_term,
+                    transaction_id=transaction_id,
+                    amount=amount
+                )
+                return {"message": "Payment Successful"}
+
+            elif doctype == "Student Applicant":
+                result = doc.on_payment_authorized(
+                    status="Completed",
+                    transaction_id=transaction_id,
+                    amount=amount
+                )
+                return result or {"message": "Applicant Payment Successful"}
+
+            else:
+                frappe.log_error(f"GrayQuest: Unsupported doctype {doctype}")
+                return {"message": "Unsupported document type"}
+
+        except Exception as e:
+            frappe.log_error("GrayQuest handle_response Error", frappe.get_traceback())
+            return {"message": f"Payment processing failed: {str(e)}"}
+        finally:
+            try:
+                login_manager.logout()
+            except Exception:
+                pass
