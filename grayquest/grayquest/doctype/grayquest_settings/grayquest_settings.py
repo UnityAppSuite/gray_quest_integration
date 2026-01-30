@@ -4,6 +4,7 @@ import base64
 
 import frappe
 from frappe import _, db, response
+from frappe.auth import LoginManager
 from frappe.model.document import Document
 from frappe.utils import call_hook_method
 from payments.utils import create_payment_gateway
@@ -82,16 +83,31 @@ class GrayQuestSettings(Document):
     def handle_webhook(self, data):
         # Add webhook log
         self.add_webhook_log(data)
-        if data.get("entity") == "direct":
-            return handle_payment_gateway_webhook(data)
-        elif data.get("entity") == "monthly-emi":
-            return handle_emi_webhook(data)
-        else:
-            frappe.log_error(_("Invalid Webhook Entity"))
+
+        # Login as Administrator for webhook processing (same pattern as Easebuzz)
+        # Webhooks run as Guest user and need elevated permissions to create Payment Entries
+        login_manager = LoginManager()
+        try:
+            login_manager.login_as("Administrator")
+
+            if data.get("entity") == "direct":
+                return handle_payment_gateway_webhook(data)
+            elif data.get("entity") == "monthly-emi":
+                return handle_emi_webhook(data)
+            else:
+                frappe.log_error(_("Invalid Webhook Entity"))
+                return {
+                    "status": "error",
+                    "message": _("Invalid Webhook Entity"),
+                }
+        except Exception as e:
+            frappe.log_error(f"GrayQuest Webhook Error: {str(e)}", frappe.get_traceback())
             return {
                 "status": "error",
-                "message": _("Invalid Webhook Entity"),
+                "message": _("Webhook processing failed"),
             }
+        finally:
+            login_manager.logout()
 
     def add_webhook_log(self, data):
         add_webhook_log(data)

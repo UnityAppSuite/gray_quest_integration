@@ -242,3 +242,12 @@ default_log_clearing_doctypes = {
 	"GrayQuest Webhook Log": 30
 }
 
+# Fixtures
+# --------
+fixtures = [
+	{
+		"dt": "Custom Field",
+		"filters": [["dt", "in", ["Payment Request", "Payment Schedule", "Fees"]]]
+	}
+]
+

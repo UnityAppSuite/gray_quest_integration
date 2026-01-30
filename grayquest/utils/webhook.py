@@ -134,44 +134,76 @@ def handle_payment_gateway_webhook(data):
 
 def handle_emi_webhook(data):
     """
-    Handle EMI Webhook, and update EMI Status in payment request
+    Handle EMI Webhook, and update EMI Status in Payment Request or Fees
 
     Args:
         data (dict): Webhook data
 
     Details:
-        - the udf_details contains `Payment Request` doctype and docname
+        - udf_details contains doctype (Payment Request or Fees) and docname
+        - For Fees: udf_3 contains payment_term to identify which schedule row
     """
     try:
         # Extract user-defined fields (udf) details from the webhook data
         udf_details = data.get("udf_details", {})
         doctype = udf_details.get("udf_1")
         docname = udf_details.get("udf_2")
+        payment_term = udf_details.get("udf_3")
 
         # Extract application details from the webhook data
         application_details = data.get("application_details")
         application_code = application_details.get("code")
 
-        # Update the document with transaction ID and EMI payment status
-        db.set_value(
-            doctype, docname, {"transaction_id": application_code, "is_emi_payment": 1}
-        )
-
-        # Retrieve the document using doctype and docname
-        doc = get_doc(doctype, docname)
-
-        # Update EMI status in the payment request
+        # Extract event and timestamp
         event = data.get("event")
         timestamp = data.get("timestamp")
-        update_emi_status(doc, event, timestamp)
 
-        # If the event is 'emi.disbursed', mark the payment as authorized/completed
-        if event == "emi.disbursed":
-            doc.on_payment_authorized(status="Completed")
-            response["message"] = _("EMI Disbursed")
+        # Handle Fees doctype
+        if doctype == "Fees":
+            doc = get_doc(doctype, docname)
 
-        # Return success message for other events
-        response["message"] = _("EMI Status Updated")
+            # Update Payment Schedule row with EMI info
+            if payment_term:
+                for schedule in doc.payment_schedule:
+                    if str(schedule.payment_term) == str(payment_term):
+                        schedule.is_emi_payment = 1
+                        schedule.emi_application_code = application_code
+                        break
+
+            # Update EMI status in the fees document with payment_term
+            update_emi_status(doc, event, timestamp, payment_term)
+
+            # If the event is 'emi.disbursed', mark the payment as authorized/completed
+            if event == "emi.disbursed":
+                doc.on_payment_authorized(
+                    status="Completed",
+                    payment_term=payment_term,
+                    transaction_id=application_code
+                )
+                response["message"] = _("EMI Disbursed")
+            else:
+                response["message"] = _("EMI Status Updated")
+
+        # Handle Payment Request doctype (legacy)
+        else:
+            # Update the document with transaction ID and EMI payment status
+            db.set_value(
+                doctype, docname, {"transaction_id": application_code, "is_emi_payment": 1}
+            )
+
+            # Retrieve the document using doctype and docname
+            doc = get_doc(doctype, docname)
+
+            # Update EMI status in the payment request
+            update_emi_status(doc, event, timestamp)
+
+            # If the event is 'emi.disbursed', mark the payment as authorized/completed
+            if event == "emi.disbursed":
+                doc.on_payment_authorized(status="Completed")
+                response["message"] = _("EMI Disbursed")
+            else:
+                response["message"] = _("EMI Status Updated")
+
     except Exception as e:
         # Log the error and return an error message
         frappe.log_error(f"EMI Webhook Error: {str(e)}", frappe.get_traceback())
@@ -194,28 +226,44 @@ def handle_response_web_form(data):
             frappe.log_error(f"{doctype} {docname} does not exist")
 
 
-def update_emi_status(doc, event, timestamp):
+def update_emi_status(doc, event, timestamp, payment_term=None):
     """
-    Update EMI Status in Payment Request
+    Update EMI Status in Payment Request or Fees
 
     Args:
-        doc (Document): Payment Request document
+        doc (Document): Payment Request or Fees document
         event (str): Webhook event
         timestamp (str): Webhook timestamp
+        payment_term (str): Payment term (required for Fees, optional for Payment Request)
     """
     if not timestamp:
         timestamp = now_datetime()
     elif isinstance(timestamp, str):
         timestamp = get_datetime(timestamp)
+        # Strip timezone info for MySQL compatibility
+        if hasattr(timestamp, 'replace') and timestamp.tzinfo is not None:
+            timestamp = timestamp.replace(tzinfo=None)
+
     status = EMI_STATUS_MAPPING.get(event)
-    if status and status not in [d.status for d in doc.emi_status]:
-        doc.append(
-            "emi_status",
-            {
-                "status": status,
-                "timestamp": timestamp,
-            },
-        )
+    if not status:
+        return
+
+    # Check if this status already exists for this payment_term
+    existing_statuses = [
+        d.status for d in doc.emi_status
+        if (not payment_term or d.payment_term == payment_term)
+    ]
+
+    if status not in existing_statuses:
+        row_data = {
+            "status": status,
+            "timestamp": timestamp,
+        }
+        # Add payment_term for Fees doctype
+        if payment_term:
+            row_data["payment_term"] = payment_term
+
+        doc.append("emi_status", row_data)
         doc.save(ignore_permissions=True)
         doc.reload()
 
@@ -233,6 +281,9 @@ def add_webhook_log(data):
             timestamp = now_datetime()
         elif isinstance(timestamp, str):
             timestamp = get_datetime(timestamp)
+            # Strip timezone info for MySQL compatibility
+            if hasattr(timestamp, 'replace') and timestamp.tzinfo is not None:
+                timestamp = timestamp.replace(tzinfo=None)
         application_details = data.get("application_details", {})
         application_code = application_details.get("code")
         udf_details = data.get("udf_details", {})
@@ -240,6 +291,8 @@ def add_webhook_log(data):
         docname = udf_details.get("udf_2")
         if doctype == "Payment Request":
             student = db.get_value(doctype, docname, "party")
+        elif doctype == "Fees":
+            student = db.get_value(doctype, docname, "student")
         elif frappe.db.has_column(doctype, "student"):
             student = db.get_value(doctype, docname, "student")
         else:

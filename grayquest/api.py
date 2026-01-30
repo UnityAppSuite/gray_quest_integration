@@ -1,5 +1,6 @@
 import frappe
 from frappe import _
+from frappe.auth import LoginManager
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -25,6 +26,9 @@ def handle_payment_callback(**kwargs):
     GrayQuest passes: payment_request, status, application_code.
     Note: GrayQuest appends params with '?' instead of '&'.
     """
+    login_manager = LoginManager()
+    return_url = "/"
+
     try:
         payment_request = kwargs.get("payment_request")
         status = kwargs.get("status", "").lower()
@@ -53,6 +57,9 @@ def handle_payment_callback(**kwargs):
         # Security: Require application_code to prevent URL tampering
         # GrayQuest always sends application_code on successful payment
         if status == "success" and application_code:
+            # Login as Administrator for payment processing (same pattern as Easebuzz)
+            login_manager.login_as("Administrator")
+
             frappe.db.set_value("Payment Request", payment_request, "transaction_id", application_code)
             doc = frappe.get_doc("Payment Request", payment_request)
 
@@ -71,7 +78,11 @@ def handle_payment_callback(**kwargs):
     except Exception as e:
         frappe.log_error(title="GrayQuest Callback Error", message=frappe.get_traceback())
         frappe.local.response["type"] = "redirect"
-        frappe.local.response["location"] = "/"
+        frappe.local.response["location"] = return_url
+    finally:
+        # Logout if we logged in
+        if frappe.session.user == "Administrator":
+            login_manager.logout()
 
 
 def _handle_student_applicant_one_time_fee_callback(pr_doc, transaction_id: str):
