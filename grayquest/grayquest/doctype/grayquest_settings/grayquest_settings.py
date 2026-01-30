@@ -3,13 +3,13 @@
 import base64
 
 import frappe
-import requests
 from frappe import _, db, response
 from frappe.model.document import Document
 from frappe.utils import call_hook_method
 from payments.utils import create_payment_gateway
 
 from grayquest.utils import get_payload
+from grayquest.utils.api_client import make_request
 from grayquest.utils.webhook import (
     add_webhook_log,
     handle_emi_webhook,
@@ -41,7 +41,7 @@ class GrayQuestSettings(Document):
             frappe.logger("grayquest").exception(frappe.get_traceback())
         return url
 
-    def generate_url(self,kwargs):
+    def generate_url(self, kwargs):
         headers = self.get_headers()
         payload = get_payload(self, kwargs)
         api_url = self.api_url.strip("/")
@@ -50,12 +50,18 @@ class GrayQuestSettings(Document):
             slug = self.event_slug
         endpoint = f"{api_url}/v1/pp/redirect/{slug}"
 
-        response = requests.post(endpoint, headers=headers, json=payload)
-        if response.status_code == 201:
-            return response.json().get("data", {}).get("redirection_url")
-        else:
-            frappe.log_error(_("GrayQuest Payment Gateway Error"), response.json())
-            return response.json().get("message")
+        result = make_request(
+            url=endpoint,
+            data=payload,
+            headers=headers,
+            service="Initiate Payment",
+            method="POST",
+        )
+
+        if isinstance(result, dict) and result.get("data", {}).get("redirection_url"):
+            return result["data"]["redirection_url"]
+
+        return result.get("message") if isinstance(result, dict) else None
 
     def get_headers(self):
         if self.api_key and self.client_id and self.client_secret:
@@ -100,66 +106,49 @@ class GrayQuestSettings(Document):
         headers = self.get_headers()
         transaction_id = db.get_value("Payment Request", payment_request, "transaction_id")
         payload = {"application_code": transaction_id}
-        res = requests.get(endpoint, headers=headers, params=payload)
 
-        if res.status_code == 200:
-            response["message"] = res.json()
-        else:
-            frappe.log_error(_("GrayQuest Payment Gateway Error"), res.json())
-            response["message"] = res.json()
+        result = make_request(
+            url=endpoint,
+            data=payload,
+            headers=headers,
+            service="Check Payment Status",
+            method="GET",
+        )
+
+        response["message"] = result
 
     def _request_payment_url(self, payload, context="Payment"):
-        """
-        Make API request to GrayQuest and return payment URL.
-
-        Args:
-            payload: Request payload dict
-            context: Context string for error logging (e.g., "Fees", "Applicant")
-
-        Returns:
-            str: Payment URL from GrayQuest API
-
-        Raises:
-            frappe.ValidationError: When API call fails
-        """
+        """Make API request to GrayQuest and return payment URL."""
         headers = self.get_headers()
         if not headers:
-            frappe.throw("GrayQuest API credentials are not configured properly")
+            frappe.log_error(
+                title="GrayQuest Configuration Error",
+                message="API credentials not configured (api_key, client_id, or client_secret missing)"
+            )
+            frappe.throw("Payment gateway is not configured. Please contact support.")
 
         api_url = self.api_url.strip("/")
         endpoint = f"{api_url}/v1/pp/redirect/{self.slug}"
 
-        try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+        result = make_request(
+            url=endpoint,
+            data=payload,
+            headers=headers,
+            service=f"Initiate Payment - {context}",
+            method="POST",
+        )
 
-            try:
-                response_data = response.json()
-            except ValueError:
-                frappe.log_error(
-                    title=f"GrayQuest {context} Invalid Response",
-                    message=f"Status: {response.status_code}\nResponse: {response.text[:500]}"
-                )
-                frappe.throw(f"GrayQuest returned invalid response (Status: {response.status_code})")
+        if isinstance(result, dict):
+            url = result.get("data", {}).get("redirection_url")
+            if url:
+                return url
 
-            if response.status_code == 201:
-                url = response_data.get("data", {}).get("redirection_url")
-                if url:
-                    return url
-                frappe.throw("GrayQuest API did not return a payment URL")
-
-            error_msg = response_data.get("message") or response_data.get("error") or str(response_data)
-            frappe.log_error(
-                title=f"GrayQuest {context} URL Error",
-                message=f"Status: {response.status_code}\nResponse: {response_data}"
-            )
-            frappe.throw(f"GrayQuest API Error: {error_msg}")
-
-        except requests.exceptions.Timeout:
-            frappe.log_error("GrayQuest API Timeout", f"Endpoint: {endpoint}")
-            frappe.throw("GrayQuest API request timed out. Please try again.")
-        except requests.exceptions.RequestException as e:
-            frappe.log_error("GrayQuest API Connection Error", frappe.get_traceback())
-            frappe.throw(f"Failed to connect to GrayQuest: {str(e)}")
+        error_msg = result.get("message") or result.get("error") if isinstance(result, dict) else str(result)
+        frappe.log_error(
+            title=f"GrayQuest {context} API Error",
+            message=f"Endpoint: {endpoint}\nResponse: {error_msg}"
+        )
+        frappe.throw("Unable to process payment. Please try again later.")
 
     def generate_payment_url(self, **kwargs):
         """Generate payment URL for direct Fees payment."""

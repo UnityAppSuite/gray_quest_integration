@@ -1,0 +1,192 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:GQ-API-LOG-{####}",
+ "creation": "2025-01-30 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "request_details_section",
+  "request_id",
+  "timestamp",
+  "service",
+  "http_method",
+  "full_url",
+  "column_break_request",
+  "status_code",
+  "execution_time_ms",
+  "is_success",
+  "error_category",
+  "section_break_request_data",
+  "request_headers",
+  "request_payload",
+  "column_break_response",
+  "response_body",
+  "curl_command_section",
+  "curl_command",
+  "error_details_section",
+  "error_details"
+ ],
+ "fields": [
+  {
+   "fieldname": "request_details_section",
+   "fieldtype": "Section Break",
+   "label": "Request Details"
+  },
+  {
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Request ID",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "timestamp",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Timestamp",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "service",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Service",
+   "read_only": 1
+  },
+  {
+   "fieldname": "http_method",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "HTTP Method",
+   "options": "GET\nPOST\nPUT\nPATCH\nDELETE",
+   "read_only": 1
+  },
+  {
+   "fieldname": "full_url",
+   "fieldtype": "Small Text",
+   "label": "Full URL",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_request",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status_code",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "execution_time_ms",
+   "fieldtype": "Int",
+   "label": "Execution Time (ms)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_success",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Is Success",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_category",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Error Category",
+   "options": "\nTimeout\nConnection Error\nValidation Error\nAuthentication Error\nAuthorization Error\nNot Found\nRate Limit\nServer Error\nUnexpected Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_request_data",
+   "fieldtype": "Section Break",
+   "label": "Request Data"
+  },
+  {
+   "fieldname": "request_headers",
+   "fieldtype": "Code",
+   "label": "Request Headers",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_payload",
+   "fieldtype": "Code",
+   "label": "Request Payload",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_response",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "response_body",
+   "fieldtype": "Code",
+   "label": "Response Body",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "curl_command_section",
+   "fieldtype": "Section Break",
+   "label": "cURL Command"
+  },
+  {
+   "fieldname": "curl_command",
+   "fieldtype": "Code",
+   "label": "cURL Command",
+   "options": "Shell",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_details_section",
+   "fieldtype": "Section Break",
+   "label": "Error Details"
+  },
+  {
+   "fieldname": "error_details",
+   "fieldtype": "Long Text",
+   "label": "Error Details",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-01-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Grayquest",
+ "name": "GrayQuest API Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
