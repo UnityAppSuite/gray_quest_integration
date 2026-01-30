@@ -5,6 +5,16 @@ from frappe.utils import get_datetime, now_datetime
 from grayquest.utils import EMI_STATUS_MAPPING
 
 
+def ensure_mode_of_payment_exists(mode_name):
+    """Create Mode of Payment if it doesn't exist"""
+    if not frappe.db.exists("Mode of Payment", mode_name):
+        frappe.get_doc({
+            "doctype": "Mode of Payment",
+            "mode_of_payment": mode_name,
+            "type": "General"
+        }).insert(ignore_permissions=True)
+
+
 def handle_payment_gateway_webhook(data):
     """
     Handle Payment Gateway Webhook
@@ -63,6 +73,10 @@ def handle_payment_gateway_webhook(data):
                     applicant.validate_one_time_payment(data=payment_data, payment_mode="Online")
                     response["message"] = _("One Time Fee Payment Captured")
                 elif doc.doctype == "Payment Request":
+                    # Set mode of payment for GrayQuest PG payments
+                    ensure_mode_of_payment_exists("GrayQuest")
+                    doc.db_set("mode_of_payment", "GrayQuest")
+                    doc.reload()  # Refresh in-memory object for payment_entry()
                     doc.on_payment_authorized(status="Completed")
                     response["message"] = _("Payment successfully captured and processed.")
                 else:
@@ -143,6 +157,15 @@ def handle_emi_webhook(data):
 
         # If the event is 'emi.disbursed', mark the payment as authorized/completed
         if event == "emi.disbursed":
+            # Check if already paid - avoid duplicate payment entry on duplicate webhook
+            if doc.status == "Paid":
+                response["message"] = _("EMI already processed")
+                return
+
+            # Set mode of payment for GrayQuest EMI payments
+            ensure_mode_of_payment_exists("GrayQuest EMI")
+            doc.db_set("mode_of_payment", "GrayQuest EMI")
+            doc.reload()  # Refresh in-memory object for payment_entry()
             doc.on_payment_authorized(status="Completed")
             response["message"] = _("EMI Disbursed")
 
@@ -244,6 +267,8 @@ def add_webhook_log(data):
         )
         # Save the Webhook Log document
         webhook_log.insert(ignore_permissions=True)
+        # Commit immediately to ensure log is saved even if payment processing fails later
+        frappe.db.commit()
     except Exception:
         # Log the error
         frappe.log_error("GrayQuest Webhook Log Error", frappe.get_traceback())
