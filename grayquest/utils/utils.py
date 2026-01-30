@@ -605,16 +605,7 @@ def _clean_mobile_number(mobile):
 
 
 def get_fees_payload(controller, kwargs):
-    """
-    Build payload for direct Fees payment (like Easebuzz).
-
-    Args:
-        controller: GrayQuest Settings instance
-        kwargs: Payment parameters from edu_quality API
-
-    Returns:
-        dict: Payload for GrayQuest API
-    """
+    """Build payload for direct Fees payment."""
     student_id = kwargs.get("student")
     student = frappe.get_doc("Student", student_id)
 
@@ -625,23 +616,25 @@ def get_fees_payload(controller, kwargs):
         guardian = frappe.get_doc("Guardian", guardian_id)
         customer_details = get_customer_details(guardian)
 
-    amount = flt(kwargs.get("amount", 0), 2)
     fee_hash = kwargs.get("fee_hash", "")
+    split_payments = kwargs.get("split_payments", {})
+    amount = flt(kwargs.get("amount", 0), 2)
+    fee_headers = _build_fee_headers(split_payments, controller, amount)
+
+    notes = {
+        "description": f"Fee payment for {student.student_name}",
+        "reference_doctype": kwargs.get("reference_doctype", "Fees"),
+        "reference_docname": kwargs.get("reference_docname", ""),
+    }
+    notes.update(_get_student_notes(student))
 
     payload = {
         "student_id": student_id,
         "customer_mobile": _clean_mobile_number(student.student_mobile_number or "9999999999"),
-        "fee_headers": {
-            "total_payable": amount,
-            "current_payable": amount,
-        },
-        "student_details": get_student_details(controller, student),
+        "fee_headers": fee_headers,
+        "student_details": _get_student_details_minimal(student),
         "customer_details": customer_details,
-        "notes": {
-            "description": f"Fee payment for {student.student_name}",
-            "reference_doctype": kwargs.get("reference_doctype", "Fees"),
-            "reference_docname": kwargs.get("reference_docname", ""),
-        },
+        "notes": notes,
         "udf_details": {
             "udf_1": kwargs.get("reference_doctype", "Fees"),
             "udf_2": kwargs.get("reference_docname", ""),
@@ -658,67 +651,100 @@ def get_fees_payload(controller, kwargs):
     return payload
 
 
-def get_applicant_payload_direct(kwargs):
-    """
-    Build payload for Student Applicant deposit payment (like Easebuzz).
+def _build_fee_headers(split_payments, controller=None, amount=None):
+    """Build fee_headers from split_payments with fallback to default_label."""
+    if split_payments and isinstance(split_payments, dict):
+        return {label: flt(amt, 2) for label, amt in split_payments.items()}
 
-    Args:
-        kwargs: Payment parameters from edu_quality API
+    if controller and controller.default_label and amount:
+        default_account_name = frappe.db.get_value("Bank Account", controller.default_label, "account_name")
+        if default_account_name:
+            frappe.logger("grayquest").info(
+                f"Using default_label fallback: {default_account_name}. "
+                "Split payments not available (enable_payment_split disabled or calculation error)."
+            )
+            return {default_account_name: flt(amount, 2)}
 
-    Returns:
-        dict: Payload for GrayQuest API
-    """
+    frappe.log_error(
+        title="GrayQuest Payment Configuration Error",
+        message=f"split_payments not available and no default_label configured. "
+                f"split_payments={split_payments}, default_label={controller.default_label if controller else None}, amount={amount}"
+    )
+    frappe.throw("Payment configuration error. Please contact support.")
+
+
+def _get_student_details_minimal(student):
+    """Get minimal student details (first_name, last_name, student_type) for GrayQuest payload."""
+    student_status = student.get("student_status")
+    details = {"student_type": "NEW" if not student_status or student_status == "New student" else "EXISTING"}
+    if student.first_name:
+        details["student_first_name"] = student.first_name
+    if student.last_name:
+        details["student_last_name"] = student.last_name
+    return details
+
+
+def _get_student_notes(student):
+    """Get student info (dob, gender, email, admission_date) for notes object."""
+    notes = {}
+    if student.date_of_birth:
+        notes["student_dob"] = get_date_str(student.date_of_birth)
+    if student.gender:
+        notes["student_gender"] = student.gender.upper()
+    if student.student_email_id:
+        notes["student_email"] = student.student_email_id
+    if student.get("joining_date"):
+        notes["student_admission_date"] = get_date_str(student.joining_date)
+    return notes
+
+
+def get_applicant_payload_direct(controller, kwargs):
+    """Build payload for Student Applicant deposit payment."""
     applicant_id = kwargs.get("applicant_id")
     applicant = frappe.get_doc("Student Applicant", applicant_id)
-
     student_name = kwargs.get("student_name") or f"{applicant.first_name or ''} {applicant.last_name or ''}".strip()
+
+    split_payments = kwargs.get("split_payments", {})
     amount = flt(kwargs.get("amount", 0), 2)
+    fee_headers = _build_fee_headers(split_payments, controller, amount)
 
-    # Build student details from applicant
-    student_details = {
-        "student_type": "NEW",
-    }
-
+    student_details = {"student_type": "NEW"}
     name_parts = student_name.split() if student_name else []
     if name_parts:
         student_details["student_first_name"] = name_parts[0]
         if len(name_parts) > 1:
             student_details["student_last_name"] = " ".join(name_parts[1:])
 
-    if applicant.date_of_birth:
-        student_details["student_dob"] = get_date_str(applicant.date_of_birth)
-    if applicant.gender:
-        student_details["student_gender"] = applicant.gender.upper()
-    if applicant.student_email_id:
-        student_details["student_email"] = applicant.student_email_id
-
-    # Build customer details
     customer_details = {}
     guardian_name = getattr(applicant, 'guardian_name', None) or getattr(applicant, 'father_name', None) or student_name
     if guardian_name:
-        name_parts = guardian_name.split()
-        if name_parts:
-            customer_details["customer_first_name"] = name_parts[0]
-            if len(name_parts) > 1:
-                customer_details["customer_last_name"] = " ".join(name_parts[1:])
-    customer_email = kwargs.get("payer_email") or applicant.student_email_id
-    if customer_email:
-        customer_details["customer_email"] = customer_email
+        guardian_parts = guardian_name.split()
+        if guardian_parts:
+            customer_details["customer_first_name"] = guardian_parts[0]
+            if len(guardian_parts) > 1:
+                customer_details["customer_last_name"] = " ".join(guardian_parts[1:])
+    if kwargs.get("payer_email") or applicant.student_email_id:
+        customer_details["customer_email"] = kwargs.get("payer_email") or applicant.student_email_id
+
+    notes = {
+        "description": f"Deposit payment for {student_name}",
+        "reference_doctype": "Student Applicant",
+        "reference_docname": applicant_id,
+    }
+    if applicant.date_of_birth:
+        notes["student_dob"] = get_date_str(applicant.date_of_birth)
+    if applicant.gender:
+        notes["student_gender"] = applicant.gender.upper()
+    if applicant.student_email_id:
+        notes["student_email"] = applicant.student_email_id
 
     payload = {
         "student_id": applicant_id,
         "customer_mobile": _clean_mobile_number(kwargs.get("payer_phone") or applicant.student_mobile_number or "9999999999"),
-        "fee_headers": {
-            "total_payable": amount,
-            "current_payable": amount,
-        },
+        "fee_headers": fee_headers,
         "student_details": student_details,
         "customer_details": customer_details,
-        "notes": {
-            "description": f"Deposit payment for {student_name}",
-            "reference_doctype": "Student Applicant",
-            "reference_docname": applicant_id,
-        },
+        "notes": notes,
         "udf_details": {
             "udf_1": "Student Applicant",
             "udf_2": applicant_id,

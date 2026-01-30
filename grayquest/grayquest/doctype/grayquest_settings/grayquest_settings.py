@@ -170,7 +170,7 @@ class GrayQuestSettings(Document):
     def get_payment_url_applicant(self, **kwargs):
         """Generate payment URL for Student Applicant deposit payment."""
         from grayquest.utils import get_applicant_payload_direct
-        payload = get_applicant_payload_direct(kwargs)
+        payload = get_applicant_payload_direct(self, kwargs)
         return self._request_payment_url(payload, context="Applicant")
 
     def handle_response(self, data):

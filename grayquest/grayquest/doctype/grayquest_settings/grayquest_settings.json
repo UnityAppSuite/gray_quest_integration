@@ -13,6 +13,7 @@
   "slug",
   "event_slug",
   "pass_class_id",
+  "default_label",
   "column_break_ssba",
   "client_id",
   "client_secret",
@@ -69,6 +70,13 @@
    "fieldname": "pass_class_id",
    "fieldtype": "Check",
    "label": "Pass Class ID"
+  },
+  {
+   "description": "Fallback bank account label when split payments are not configured or unavailable",
+   "fieldname": "default_label",
+   "fieldtype": "Link",
+   "label": "Default Label",
+   "options": "Bank Account"
   },
   {
    "fieldname": "event_slug",
