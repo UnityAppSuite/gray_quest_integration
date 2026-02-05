@@ -671,7 +671,7 @@ def _build_fee_headers(split_payments, controller=None, amount=None):
 
 
 def _apply_payment_prefixes(base_headers, controller):
-    """Apply emi_/pg_ prefixes to fee headers. Throws error if neither EMI nor PG is enabled."""
+    """Apply _EMI/_PG suffixes to fee headers. Throws error if neither EMI nor PG is enabled."""
     if not controller:
         frappe.log_error(title="GrayQuest Configuration Error", message="GrayQuest Settings not configured.")
         frappe.throw("Unable to process payment. Please contact support.")
@@ -688,9 +688,9 @@ def _apply_payment_prefixes(base_headers, controller):
 
     result = {}
     if pg_enabled:
-        result.update({f"pg_{label}": amt for label, amt in base_headers.items()})
+        result.update({f"{label}_PG": amt for label, amt in base_headers.items()})
     if emi_enabled:
-        result.update({f"emi_{label}": amt for label, amt in base_headers.items()})
+        result.update({f"{label}_EMI": amt for label, amt in base_headers.items()})
 
     return result
 

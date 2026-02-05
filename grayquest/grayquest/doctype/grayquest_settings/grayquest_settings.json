@@ -103,14 +103,14 @@
   },
   {
    "default": "0",
-   "description": "If enabled, fee headers will be prefixed with 'emi_'",
+   "description": "If enabled, fee headers will be suffixed with '_EMI'",
    "fieldname": "emi_enabled",
    "fieldtype": "Check",
    "label": "EMI Enabled"
   },
   {
    "default": "0",
-   "description": "If enabled, fee headers will be prefixed with 'pg_'",
+   "description": "If enabled, fee headers will be suffixed with '_PG'",
    "fieldname": "pg_enabled",
    "fieldtype": "Check",
    "label": "PG Enabled"
