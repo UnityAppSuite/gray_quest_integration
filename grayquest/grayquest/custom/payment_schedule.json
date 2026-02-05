@@ -24,7 +24,7 @@
    "owner": "Administrator",
    "permlevel": 0,
    "print_hide": 0,
-   "read_only": 0,
+   "read_only": 1,
    "reqd": 0,
    "search_index": 0,
    "translatable": 0,

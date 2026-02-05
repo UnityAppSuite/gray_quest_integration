@@ -13,11 +13,15 @@
   "slug",
   "event_slug",
   "pass_class_id",
-  "default_label",
   "column_break_ssba",
   "client_id",
   "client_secret",
-  "api_key"
+  "api_key",
+  "payment_options_section",
+  "emi_enabled",
+  "pg_enabled",
+  "column_break_jipl",
+  "default_label"
  ],
  "fields": [
   {
@@ -83,10 +87,33 @@
    "fieldtype": "Data",
    "label": "Event Slug",
    "reqd": 1
+  },
+  {
+   "fieldname": "payment_options_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Options"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, fee headers will be prefixed with 'emi_'",
+   "fieldname": "emi_enabled",
+   "fieldtype": "Check",
+   "label": "EMI Enabled"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, fee headers will be prefixed with 'pg_'",
+   "fieldname": "pg_enabled",
+   "fieldtype": "Check",
+   "label": "PG Enabled"
+  },
+  {
+   "fieldname": "column_break_jipl",
+   "fieldtype": "Column Break"
   }
  ],
  "links": [],
- "modified": "2026-01-08 15:40:03.033770",
+ "modified": "2026-02-04 17:02:48.544259",
  "modified_by": "Administrator",
  "module": "GrayQuest",
  "name": "GrayQuest Settings",

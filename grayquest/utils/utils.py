@@ -652,25 +652,47 @@ def get_fees_payload(controller, kwargs):
 
 
 def _build_fee_headers(split_payments, controller=None, amount=None):
-    """Build fee_headers from split_payments with fallback to default_label."""
-    if split_payments and isinstance(split_payments, dict):
-        return {label: flt(amt, 2) for label, amt in split_payments.items()}
+    """Build fee_headers with EMI/PG prefixes when split payment enabled, else use default_label."""
+    if not split_payments or not isinstance(split_payments, dict):
+        if controller and controller.default_label and amount:
+            account_name = frappe.db.get_value("Bank Account", controller.default_label, "account_name")
+            if account_name:
+                return {account_name: flt(amount, 2)}
 
-    if controller and controller.default_label and amount:
-        default_account_name = frappe.db.get_value("Bank Account", controller.default_label, "account_name")
-        if default_account_name:
-            frappe.logger("grayquest").info(
-                f"Using default_label fallback: {default_account_name}. "
-                "Split payments not available (enable_payment_split disabled or calculation error)."
-            )
-            return {default_account_name: flt(amount, 2)}
+        frappe.log_error(
+            title="GrayQuest Payment Configuration Error",
+            message=f"No split_payments and no default_label configured. "
+                    f"split_payments={split_payments}, default_label={controller.default_label if controller else None}"
+        )
+        frappe.throw("Unable to process payment. Please contact support.")
 
-    frappe.log_error(
-        title="GrayQuest Payment Configuration Error",
-        message=f"split_payments not available and no default_label configured. "
-                f"split_payments={split_payments}, default_label={controller.default_label if controller else None}, amount={amount}"
-    )
-    frappe.throw("Payment configuration error. Please contact support.")
+    base_headers = {label: flt(amt, 2) for label, amt in split_payments.items()}
+    return _apply_payment_prefixes(base_headers, controller)
+
+
+def _apply_payment_prefixes(base_headers, controller):
+    """Apply emi_/pg_ prefixes to fee headers. Throws error if neither EMI nor PG is enabled."""
+    if not controller:
+        frappe.log_error(title="GrayQuest Configuration Error", message="GrayQuest Settings not configured.")
+        frappe.throw("Unable to process payment. Please contact support.")
+
+    emi_enabled = getattr(controller, "emi_enabled", False)
+    pg_enabled = getattr(controller, "pg_enabled", False)
+
+    if not emi_enabled and not pg_enabled:
+        frappe.log_error(
+            title="GrayQuest Payment Mode Configuration Error",
+            message="Split payment enabled but neither EMI nor PG is configured in GrayQuest Settings."
+        )
+        frappe.throw("Unable to process payment. Please contact support.")
+
+    result = {}
+    if pg_enabled:
+        result.update({f"pg_{label}": amt for label, amt in base_headers.items()})
+    if emi_enabled:
+        result.update({f"emi_{label}": amt for label, amt in base_headers.items()})
+
+    return result
 
 
 def _get_student_details_minimal(student):
