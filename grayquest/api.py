@@ -9,6 +9,7 @@ def webhook_handler(**kwargs):
     data = frappe.parse_json(kwargs)
     controller = frappe.get_last_doc("GrayQuest Settings")
     controller.handle_webhook(data)
+    return {"message": "Webhook received"}
 
 
 @frappe.whitelist()
