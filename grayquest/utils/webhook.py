@@ -141,14 +141,14 @@ def handle_emi_webhook(data):
 
     Details:
         - udf_details contains doctype (Payment Request or Fees) and docname
-        - For Fees: udf_3 contains payment_term to identify which schedule row
+        - EMI fields (is_emi_payment, emi_application_code) stored on Fees parent doc
+        - is_emi_payment marked on "emi.process.completed" or "emi.disbursed" event
     """
     try:
         # Extract user-defined fields (udf) details from the webhook data
         udf_details = data.get("udf_details", {})
         doctype = udf_details.get("udf_1")
         docname = udf_details.get("udf_2")
-        payment_term = udf_details.get("udf_3")
 
         # Extract application details from the webhook data
         application_details = data.get("application_details")
@@ -162,23 +162,19 @@ def handle_emi_webhook(data):
         if doctype == "Fees":
             doc = get_doc(doctype, docname)
 
-            # Update Payment Schedule row with EMI info
-            if payment_term:
-                for schedule in doc.payment_schedule:
-                    if str(schedule.payment_term) == str(payment_term):
-                        schedule.is_emi_payment = 1
-                        schedule.emi_application_code = application_code
-                        break
+            # Set EMI fields on Fees parent doc
+            doc.emi_application_code = application_code
+            if event == "emi.process.completed" or event == "emi.disbursed":
+                doc.is_emi_payment = 1
 
-            # Update EMI status in the fees document with payment_term
-            update_emi_status(doc, event, timestamp, payment_term)
+            # Update EMI status in the fees document
+            update_emi_status(doc, event, timestamp)
 
             # If the event is 'emi.disbursed', handle based on tranche type
             if event == "emi.disbursed":
-                note = data.get("note", {}) or {}
-                is_second_disbursal = bool(note.get("id"))
+                notes = data.get("notes", {}) or {}
+                is_second_disbursal = bool(notes.get("id"))
                 message = doc.handle_emi_payment(application_code, is_second_disbursal)
-
                 response["message"] = message
             else:
                 response["message"] = _("EMI Status Updated")
@@ -225,7 +221,7 @@ def handle_response_web_form(data):
             frappe.log_error(f"{doctype} {docname} does not exist")
 
 
-def update_emi_status(doc, event, timestamp, payment_term=None):
+def update_emi_status(doc, event, timestamp):
     """
     Update EMI Status in Payment Request or Fees
 
@@ -233,7 +229,6 @@ def update_emi_status(doc, event, timestamp, payment_term=None):
         doc (Document): Payment Request or Fees document
         event (str): Webhook event
         timestamp (str): Webhook timestamp
-        payment_term (str): Payment term (required for Fees, optional for Payment Request)
     """
     if not timestamp:
         timestamp = now_datetime()
@@ -247,24 +242,12 @@ def update_emi_status(doc, event, timestamp, payment_term=None):
     if not status:
         return
 
-    # Check if this status already exists for this payment_term
-    existing_statuses = [
-        d.status for d in doc.emi_status
-        if (not payment_term or d.payment_term == payment_term)
-    ]
-
-    if status not in existing_statuses:
-        row_data = {
-            "status": status,
-            "timestamp": timestamp,
-        }
-        # Add payment_term for Fees doctype
-        if payment_term:
-            row_data["payment_term"] = payment_term
-
-        doc.append("emi_status", row_data)
-        doc.save(ignore_permissions=True)
-        doc.reload()
+    doc.append("emi_status", {
+        "status": status,
+        "timestamp": timestamp,
+    })
+    doc.save(ignore_permissions=True)
+    doc.reload()
 
 
 def add_webhook_log(data):

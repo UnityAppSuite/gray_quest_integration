@@ -247,7 +247,7 @@ default_log_clearing_doctypes = {
 fixtures = [
 	{
 		"dt": "Custom Field",
-		"filters": [["dt", "in", ["Payment Request", "Payment Schedule", "Fees"]]]
+		"filters": [["dt", "in", ["Payment Request", "Fees"]]]
 	}
 ]
 
