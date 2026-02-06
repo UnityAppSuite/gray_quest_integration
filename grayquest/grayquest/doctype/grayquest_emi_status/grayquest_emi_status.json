@@ -6,18 +6,11 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "payment_term",
   "status",
   "column_break_aeep",
   "timestamp"
  ],
  "fields": [
-  {
-   "fieldname": "payment_term",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Payment Term"
-  },
   {
    "fieldname": "status",
    "fieldtype": "Select",
