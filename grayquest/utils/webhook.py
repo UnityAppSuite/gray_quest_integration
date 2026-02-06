@@ -173,14 +173,14 @@ def handle_emi_webhook(data):
             # Update EMI status in the fees document with payment_term
             update_emi_status(doc, event, timestamp, payment_term)
 
-            # If the event is 'emi.disbursed', mark the payment as authorized/completed
-            if event == "emi.disbursed":
-                doc.on_payment_authorized(
-                    status="Completed",
-                    payment_term=payment_term,
-                    transaction_id=application_code
-                )
-                response["message"] = _("EMI Disbursed")
+            if event == "emi.form.submitted":
+                doc.remove_payment_plan_discount()
+                response["message"] = _("EMI Form Submitted - Payment Plan Discount Removed")
+
+            elif event == "emi.disbursed":
+                _process_emi_disbursed(doc, application_code)
+                response["message"] = _("EMI Disbursed - Payments Marked as Paid")
+
             else:
                 response["message"] = _("EMI Status Updated")
 
@@ -208,6 +208,62 @@ def handle_emi_webhook(data):
         # Log the error and return an error message
         frappe.log_error(f"EMI Webhook Error: {str(e)}", frappe.get_traceback())
         response["message"] = _("Error in EMI Webhook")
+
+
+def _process_emi_disbursed(doc, application_code):
+    """
+    Process EMI disbursed event for Fees based on tranche type setting.
+
+    Single: Mark all unpaid terms as paid.
+    Double: First disbursement marks first unpaid term, second marks all remaining.
+    """
+    tranche_type = _get_tranche_type_setting()
+
+    if tranche_type == "Single":
+        for schedule in doc.payment_schedule:
+            if schedule.outstanding > 0:
+                doc.on_payment_authorized(
+                    status="Completed",
+                    payment_term=schedule.payment_term,
+                    transaction_id=application_code,
+                )
+                doc.reload()
+    elif tranche_type == "Double":
+        first_unpaid = None
+        for schedule in doc.payment_schedule:
+            if schedule.outstanding > 0:
+                first_unpaid = schedule
+                break
+
+        if not first_unpaid:
+            return
+
+        # Check if this is the first or second disbursement
+        # If first unpaid is idx 1, it's the first disbursement — mark only that term
+        # Otherwise, first term is already paid — mark all remaining
+        if first_unpaid.idx == 1:
+            doc.on_payment_authorized(
+                status="Completed",
+                payment_term=first_unpaid.payment_term,
+                transaction_id=application_code,
+            )
+        else:
+            for schedule in doc.payment_schedule:
+                if schedule.outstanding > 0:
+                    doc.on_payment_authorized(
+                        status="Completed",
+                        payment_term=schedule.payment_term,
+                        transaction_id=application_code,
+                    )
+                    doc.reload()
+
+
+def _get_tranche_type_setting():
+    """Get tranche type setting from the first EMI-enabled GrayQuest Settings. Defaults to 'Single'."""
+    settings_name = db.get_value("GrayQuest Settings", {"emi_enabled": 1}, "name")
+    if settings_name:
+        return db.get_value("GrayQuest Settings", settings_name, "tranche_type") or "Single"
+    return "Single"
 
 
 def handle_response_web_form(data):

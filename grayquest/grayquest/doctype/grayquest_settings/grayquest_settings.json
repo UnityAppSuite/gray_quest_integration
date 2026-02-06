@@ -19,6 +19,7 @@
   "api_key",
   "payment_options_section",
   "emi_enabled",
+  "tranche_type",
   "pg_enabled",
   "column_break_jipl",
   "default_label"
@@ -99,6 +100,15 @@
    "fieldname": "emi_enabled",
    "fieldtype": "Check",
    "label": "EMI Enabled"
+  },
+  {
+   "default": "Single",
+   "depends_on": "eval:doc.emi_enabled",
+   "description": "Single: Mark all terms paid on EMI disbursed. Double: Mark first term paid on first disbursement, remaining terms on second.",
+   "fieldname": "tranche_type",
+   "fieldtype": "Select",
+   "label": "Tranche Type",
+   "options": "Single\nDouble"
   },
   {
    "default": "0",
