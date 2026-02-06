@@ -173,14 +173,13 @@ def handle_emi_webhook(data):
             # Update EMI status in the fees document with payment_term
             update_emi_status(doc, event, timestamp, payment_term)
 
-            # If the event is 'emi.disbursed', mark the payment as authorized/completed
+            # If the event is 'emi.disbursed', handle based on tranche type
             if event == "emi.disbursed":
-                doc.on_payment_authorized(
-                    status="Completed",
-                    payment_term=payment_term,
-                    transaction_id=application_code
-                )
-                response["message"] = _("EMI Disbursed")
+                note = data.get("note", {}) or {}
+                is_second_disbursal = bool(note.get("id"))
+                message = doc.handle_emi_payment(application_code, is_second_disbursal)
+
+                response["message"] = message
             else:
                 response["message"] = _("EMI Status Updated")
 
