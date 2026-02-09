@@ -116,7 +116,13 @@ def _get_student_payment_payload(controller, ref_doc, data):
         "student_details": get_student_details(controller, student),
         "customer_details": customer_details,
         "notes": get_notes(ref_doc, data),
-        "udf_details": {"udf_1": ref_doc.doctype, "udf_2": ref_doc.name},
+        "udf_details": {
+            "udf_1": ref_doc.doctype,
+            "udf_2": ref_doc.name,
+            "udf_3": getattr(ref_doc, "reference_doctype", None),
+            "udf_4": getattr(ref_doc, "reference_name", None),
+            "udf_5": getattr(ref_doc, "payment_term", None),
+        },
         "redirection": {
             "success_url": data.get("success_url") or f"{url}/grayquest-payment",
             "error_url": data.get("failure_url") or f"{url}/grayquest-payment",
