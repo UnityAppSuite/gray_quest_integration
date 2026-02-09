@@ -43,7 +43,7 @@ def handle_payment_gateway_webhook(data):
             application_code = application_details.get("code")
 
             # Check if already paid via callback - avoid re-processing
-            current_status = db.get_value(doctype, docname, "status")
+            current_status = db.get_value(doctype, docname, "status") if frappe.db.has_column(doctype, "status") else None
             if current_status == "Paid":
                 # Already processed via callback - just acknowledge webhook
                 response["message"] = _("Payment already processed via callback")
