@@ -63,8 +63,12 @@ class GrayQuestSettings(Document):
         if response.status_code == 201:
             return response.json().get("data", {}).get("redirection_url")
         else:
-            frappe.log_error(_("GrayQuest Payment Gateway Error"), response.json())
-            return response.json().get("message")
+            response_data = response.json()
+            frappe.log_error(_("GrayQuest Payment Gateway Error"), response_data)
+            frappe.throw(
+                _("GrayQuest Payment Error: {0}").format(response_data.get("message", "Unknown error")),
+                title=_("Payment Gateway Error"),
+            )
 
     def get_headers(self):
         if not (self.api_key and self.client_id and self.client_secret):
