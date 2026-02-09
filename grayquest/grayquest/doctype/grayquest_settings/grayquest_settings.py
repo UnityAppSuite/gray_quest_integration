@@ -41,7 +41,10 @@ class GrayQuestSettings(Document):
             frappe.logger("grayquest").exception(frappe.get_traceback())
         return url
 
-    def generate_url(self,kwargs):
+    def generate_payment_url(self, **kwargs):
+        return self.get_payment_url(**kwargs)
+
+    def generate_url(self, kwargs):
         headers = self.get_headers()
         payload = get_payload(self, kwargs)
         api_url = self.api_url.strip("/")

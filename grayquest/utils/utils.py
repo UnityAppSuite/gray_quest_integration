@@ -228,6 +228,8 @@ def get_fee_headers(doc, data):
 
         if doctype in ["Event Participant", "Student Applicant"]:
             total = current = getattr(doc, current_field, 0)
+        if doctype == "Fees" and data.get("payment_term"):
+            total = current = flt(data.get("amount", 0), 2)
         else:
             # For other document types, fetch referenced document
             if hasattr(doc, 'reference_name') and doc.reference_name:
