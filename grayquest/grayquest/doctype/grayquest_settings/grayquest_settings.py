@@ -116,11 +116,16 @@ class GrayQuestSettings(Document):
         """
         headers = self.get_headers()
 
+        redacted_headers = {
+            key: "******" if key in ("Authorization", "GQ-API-Key") else value
+            for key, value in headers.items()
+        }
+
         integration_request = self.log_request(
             service_name="GrayQuest",
             data=payload or params or {},
             url=endpoint,
-            request_headers=headers,
+            request_headers=redacted_headers,
             reference_doctype=reference_doctype,
             reference_docname=reference_docname,
             request_description=request_description,
@@ -140,7 +145,7 @@ class GrayQuestSettings(Document):
                 integration_request.handle_success(response_data)
             else:
                 integration_request.handle_failure(response_data)
-
+            frappe.db.commit()
             return response
         except Exception:
             integration_request.handle_failure({"error": frappe.get_traceback()})
@@ -149,19 +154,6 @@ class GrayQuestSettings(Document):
     def handle_webhook(self, data):
         self.add_webhook_log(data)
 
-        udf_details = data.get("udf_details", {})
-        doctype = udf_details.get("udf_1")
-        docname = udf_details.get("udf_2")
-
-        integration_request = self.log_request(
-            service_name="GrayQuest Webhook",
-            data=data,
-            reference_doctype=doctype,
-            reference_docname=docname,
-            is_remote_request=1,
-            request_description="GrayQuest Webhook",
-        )
-
         try:
             if data.get("entity") == "direct":
                 result = handle_payment_gateway_webhook(data)
@@ -169,13 +161,9 @@ class GrayQuestSettings(Document):
                 result = handle_emi_webhook(data)
             else:
                 frappe.log_error(_("Invalid Webhook Entity"))
-                integration_request.handle_failure({"error": "Invalid Webhook Entity"})
                 return {"status": "error", "message": _("Invalid Webhook Entity")}
-
-            integration_request.handle_success(result or {"status": "success"})
             return result
         except Exception:
-            integration_request.handle_failure({"error": frappe.get_traceback()})
             raise
 
     def add_webhook_log(self, data):

@@ -121,7 +121,7 @@ def handle_payment_gateway_webhook(data):
 
     elif data.get("event") == "dt.payment.order.created":
         udf_details = data.get("udf_details", {})
-        doctype, docname, _ = resolve_payment_request(udf_details)
+        doctype, docname, _fee_type = resolve_payment_request(udf_details)
         doc = get_doc(doctype, docname)
         if hasattr(doc, "validate_payment_order_created"):
             res = doc.validate_payment_order_created(data)
@@ -132,7 +132,7 @@ def handle_payment_gateway_webhook(data):
 
     elif data.get("event") == "dt.payment.failed":
         udf_details = data.get("udf_details", {})
-        doctype, docname, _ = resolve_payment_request(udf_details)
+        doctype, docname, _fee_type = resolve_payment_request(udf_details)
         doc = get_doc(doctype, docname)
         if hasattr(doc, "validate_failed_payment"):
             res = doc.validate_failed_payment(data)
@@ -153,7 +153,7 @@ def handle_emi_webhook(data):
         - the udf_details contains `Payment Request` doctype and docname
     """
     udf_details = data.get("udf_details", {})
-    doctype, docname, _ = resolve_payment_request(udf_details)
+    doctype, docname, _fee_type = resolve_payment_request(udf_details)
 
     # Extract application details from the webhook data
     application_details = data.get("application_details", {})
@@ -249,7 +249,7 @@ def add_webhook_log(data):
         application_details = data.get("application_details", {})
         application_code = application_details.get("code")
         udf_details = data.get("udf_details", {})
-        doctype, docname, _ = resolve_payment_request(udf_details)
+        doctype, docname, _fee_type = resolve_payment_request(udf_details)
         student = None
         if doctype and docname and db.exists(doctype, docname):
             if doctype == "Payment Request":
