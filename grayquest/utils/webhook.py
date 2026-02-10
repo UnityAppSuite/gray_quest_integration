@@ -15,6 +15,44 @@ def ensure_mode_of_payment_exists(mode_name):
         }).insert(ignore_permissions=True)
 
 
+def resolve_payment_request(udf_details):
+    """Resolve Payment Request doctype and docname from udf_details.
+
+    Primary: udf_1 (doctype) and udf_2 (docname).
+    Fallback: If udf_1/udf_2 is missing or the doc doesn't exist, look up Payment Request
+    using udf_3 (fee doctype), udf_4 (fee name), and udf_5 (payment term).
+
+    Returns:
+        tuple: (doctype, docname, fee_type) where fee_type is udf_3 value (e.g. "one_time")
+    """
+    doctype = udf_details.get("udf_1")
+    docname = udf_details.get("udf_2")
+    fee_type = udf_details.get("udf_3")
+
+    try:
+        if doctype and docname and db.exists(doctype, docname):
+            return doctype, docname, fee_type
+    except Exception:
+        pass
+
+    # Fallback: find Payment Request using fee details from udf_3/4/5
+    fee_name = udf_details.get("udf_4")
+    payment_term = udf_details.get("udf_5")
+    if fee_name:
+        filters = {
+            "reference_doctype": "Fees",
+            "reference_name": fee_name,
+            "docstatus": 1,
+        }
+        if payment_term:
+            filters["payment_term"] = payment_term
+        pr_name = db.get_value("Payment Request", filters, "name", order_by="creation desc")
+        if pr_name:
+            return "Payment Request", pr_name, fee_type
+
+    return doctype, docname, fee_type
+
+
 def handle_payment_gateway_webhook(data):
     """
     Handle Payment Gateway Webhook
@@ -29,97 +67,79 @@ def handle_payment_gateway_webhook(data):
         - If fee_type is `one_time`, call validate_one_time_payment on Student Applicant
         - If payment was already processed via callback, just acknowledge the webhook
     """
-    try:
-        if data.get("event") == "dt.payment.captured":
-            # Extract udf_details from the data
-            udf_details = data.get("udf_details", {})
-            # Get doctype and docname from udf_details
-            doctype = udf_details.get("udf_1")
-            docname = udf_details.get("udf_2")
-            fee_type = udf_details.get("udf_3")
-            # Extract application details from the data
-            application_details = data.get("application_details")
-            # Get application code from application details
-            application_code = application_details.get("code")
+    if data.get("event") == "dt.payment.captured":
+        udf_details = data.get("udf_details", {})
+        doctype, docname, fee_type = resolve_payment_request(udf_details)
+        # Extract application details from the data
+        application_details = data.get("application_details", {})
+        # Get application code from application details
+        application_code = application_details.get("code")
 
-            # Check if already paid via callback - avoid re-processing
-            current_status = db.get_value(doctype, docname, "status") if frappe.db.has_column(doctype, "status") else None
-            if current_status == "Paid":
-                # Already processed via callback - just acknowledge webhook
-                response["message"] = _("Payment already processed via callback")
-                return
+        # Check if already paid via callback - avoid re-processing
+        current_status = db.get_value(doctype, docname, "status") if frappe.db.has_column(doctype, "status") else None
+        if current_status == "Paid":
+            # Already processed via callback - just acknowledge webhook
+            response["message"] = _("Payment already processed via callback")
+            return
 
-            # Not yet paid - process via webhook (existing behavior)
-            # Fetch the document using doctype and docname
-            doc = get_doc(doctype, docname)
-            # Get payment details from the data
-            payment_details = data.get("payment_details", {})
-            amount = payment_details.get("amount")
-            # Update the transaction_id field in the document
-            if hasattr(doc, "transaction_id"):
-                doc.db_set("transaction_id", application_code)
-            if hasattr(doc, "paid_amount"):
-                doc.db_set("paid_amount", amount)
-            # Call the on_payment_authorized method on the document
-            if payment_details.get("status") == "PAID":
-                # Route based on fee_type for one-time payments
-                if fee_type == "one_time" and hasattr(doc, "reference_doctype") and doc.reference_doctype == "Student Applicant":
-                    # Get Student Applicant and call validate_one_time_payment
-                    applicant = frappe.get_doc("Student Applicant", doc.reference_name)
-                    payment_data = {
-                        "amount": doc.grand_total,
-                        "transaction_id": application_code,
-                    }
-                    applicant.validate_one_time_payment(data=payment_data, payment_mode="Online")
-                    response["message"] = _("One Time Fee Payment Captured")
-                elif doc.doctype == "Payment Request":
-                    # Set mode of payment for GrayQuest PG payments
-                    ensure_mode_of_payment_exists("GrayQuest")
-                    doc.db_set("mode_of_payment", "GrayQuest")
-                    doc.reload()  # Refresh in-memory object for payment_entry()
-                    doc.on_payment_authorized(status="Completed")
-                    response["message"] = _("Payment successfully captured and processed.")
+        # Not yet paid - process via webhook (existing behavior)
+        # Fetch the document using doctype and docname
+        doc = get_doc(doctype, docname)
+        # Get payment details from the data
+        payment_details = data.get("payment_details", {})
+        amount = payment_details.get("amount")
+        # Update the transaction_id field in the document
+        if hasattr(doc, "transaction_id"):
+            doc.db_set("transaction_id", application_code)
+        if hasattr(doc, "paid_amount"):
+            doc.db_set("paid_amount", amount)
+        # Call the on_payment_authorized method on the document
+        if payment_details.get("status") == "PAID":
+            # Route based on fee_type for one-time payments
+            if fee_type == "one_time" and hasattr(doc, "reference_doctype") and doc.reference_doctype == "Student Applicant":
+                # Get Student Applicant and call validate_one_time_payment
+                applicant = frappe.get_doc("Student Applicant", doc.reference_name)
+                payment_data = {
+                    "amount": doc.grand_total,
+                    "transaction_id": application_code,
+                }
+                applicant.validate_one_time_payment(data=payment_data, payment_mode="Online")
+                response["message"] = _("One Time Fee Payment Captured")
+            elif doc.doctype == "Payment Request":
+                # Set mode of payment for GrayQuest PG payments
+                ensure_mode_of_payment_exists("GrayQuest")
+                doc.db_set("mode_of_payment", "GrayQuest")
+                doc.reload()  # Refresh in-memory object for payment_entry()
+                doc.on_payment_authorized(status="Completed")
+                response["message"] = _("Payment successfully captured and processed.")
+            else:
+                if hasattr(doc, "validate_payment"):
+                    doc.validate_payment(payment_details)
                 else:
-                    if hasattr(doc, "validate_payment"):
-                        doc.validate_payment(payment_details)
-                    else:
-                        create_payment_entry(doc, amount=amount, transaction_id=application_code)
-                    response["message"] = _("Payment successfully captured and processed.")
+                    create_payment_entry(doc, amount=amount, transaction_id=application_code)
+                response["message"] = _("Payment successfully captured and processed.")
 
-        elif data.get("event") == "dt.payment.order.created":
-            udf_details = data.get("udf_details", {})
-            # Get doctype and docname from udf_details
-            doctype = udf_details.get("udf_1")
-            docname = udf_details.get("udf_2")
-            # Fetch the document using doctype and docname
-            doc = get_doc(doctype, docname)
-            if hasattr(doc, "validate_payment_order_created"):
-                res = doc.validate_payment_order_created(data)
-                if res:
-                    response["message"] = res
-                else:
-                    response["message"] = _("Payment order created, awaiting completion.")
+    elif data.get("event") == "dt.payment.order.created":
+        udf_details = data.get("udf_details", {})
+        doctype, docname, _ = resolve_payment_request(udf_details)
+        doc = get_doc(doctype, docname)
+        if hasattr(doc, "validate_payment_order_created"):
+            res = doc.validate_payment_order_created(data)
+            if res:
+                response["message"] = res
+            else:
+                response["message"] = _("Payment order created, awaiting completion.")
 
-        elif data.get("event") == "dt.payment.failed":
-            udf_details = data.get("udf_details", {})
-            # Get doctype and docname from udf_details
-            doctype = udf_details.get("udf_1")
-            docname = udf_details.get("udf_2")
-            doc = get_doc(doctype, docname)
-            if hasattr(doc, "validate_failed_payment"):
-                res = doc.validate_failed_payment(data)
-                if res:
-                    response["message"] = res
-                else:
-                    response["message"] = _("Payment failed. Please try again or contact support.")
-
-            # Return success response
-    except Exception as e:
-        # Log the error and return error response
-        frappe.log_error(
-            f"Payment Gateway Webhook Error: {str(e)}", frappe.get_traceback()
-        )
-        response["message"] = _("Error in Payment Gateway Webhook")
+    elif data.get("event") == "dt.payment.failed":
+        udf_details = data.get("udf_details", {})
+        doctype, docname, _ = resolve_payment_request(udf_details)
+        doc = get_doc(doctype, docname)
+        if hasattr(doc, "validate_failed_payment"):
+            res = doc.validate_failed_payment(data)
+            if res:
+                response["message"] = res
+            else:
+                response["message"] = _("Payment failed. Please try again or contact support.")
 
 
 def handle_emi_webhook(data):
@@ -132,49 +152,43 @@ def handle_emi_webhook(data):
     Details:
         - the udf_details contains `Payment Request` doctype and docname
     """
-    try:
-        # Extract user-defined fields (udf) details from the webhook data
-        udf_details = data.get("udf_details", {})
-        doctype = udf_details.get("udf_1")
-        docname = udf_details.get("udf_2")
+    udf_details = data.get("udf_details", {})
+    doctype, docname, _ = resolve_payment_request(udf_details)
 
-        # Extract application details from the webhook data
-        application_details = data.get("application_details")
-        application_code = application_details.get("code")
+    # Extract application details from the webhook data
+    application_details = data.get("application_details", {})
+    application_code = application_details.get("code")
 
-        # Update the document with transaction ID and EMI payment status
-        db.set_value(
-            doctype, docname, {"transaction_id": application_code, "is_emi_payment": 1}
-        )
+    # Update the document with transaction ID and EMI payment status
+    db.set_value(
+        doctype, docname, {"transaction_id": application_code, "is_emi_payment": 1}
+    )
 
-        # Retrieve the document using doctype and docname
-        doc = get_doc(doctype, docname)
+    # Retrieve the document using doctype and docname
+    doc = get_doc(doctype, docname)
 
-        # Update EMI status in the payment request
-        event = data.get("event")
-        timestamp = data.get("timestamp")
-        update_emi_status(doc, event, timestamp)
+    # Update EMI status in the payment request
+    event = data.get("event")
+    timestamp = data.get("timestamp")
+    update_emi_status(doc, event, timestamp)
 
-        # If the event is 'emi.disbursed', mark the payment as authorized/completed
-        if event == "emi.disbursed":
-            # Check if already paid - avoid duplicate payment entry on duplicate webhook
-            if doc.status == "Paid":
-                response["message"] = _("EMI already processed")
-                return
+    # If the event is 'emi.disbursed', mark the payment as authorized/completed
+    if event == "emi.disbursed":
+        # Check if already paid - avoid duplicate payment entry on duplicate webhook
+        if doc.status == "Paid":
+            response["message"] = _("EMI already processed")
+            return
 
-            # Set mode of payment for GrayQuest EMI payments
-            ensure_mode_of_payment_exists("GrayQuest EMI")
-            doc.db_set("mode_of_payment", "GrayQuest EMI")
-            doc.reload()  # Refresh in-memory object for payment_entry()
-            doc.on_payment_authorized(status="Completed")
-            response["message"] = _("EMI Disbursed")
+        # Set mode of payment for GrayQuest EMI payments
+        ensure_mode_of_payment_exists("GrayQuest EMI")
+        doc.db_set("mode_of_payment", "GrayQuest EMI")
+        doc.reload()  # Refresh in-memory object for payment_entry()
+        doc.on_payment_authorized(status="Completed")
+        response["message"] = _("EMI Disbursed")
+        return
 
-        # Return success message for other events
-        response["message"] = _("EMI Status Updated")
-    except Exception as e:
-        # Log the error and return an error message
-        frappe.log_error(f"EMI Webhook Error: {str(e)}", frappe.get_traceback())
-        response["message"] = _("Error in EMI Webhook")
+    # Return success message for other events
+    response["message"] = _("EMI Status Updated")
 
 
 def handle_response_web_form(data):
@@ -235,14 +249,13 @@ def add_webhook_log(data):
         application_details = data.get("application_details", {})
         application_code = application_details.get("code")
         udf_details = data.get("udf_details", {})
-        doctype = udf_details.get("udf_1")
-        docname = udf_details.get("udf_2")
-        if doctype == "Payment Request":
-            student = db.get_value(doctype, docname, "party")
-        elif frappe.db.has_column(doctype, "student"):
-            student = db.get_value(doctype, docname, "student")
-        else:
-            student = None
+        doctype, docname, _ = resolve_payment_request(udf_details)
+        student = None
+        if doctype and docname and db.exists(doctype, docname):
+            if doctype == "Payment Request":
+                student = db.get_value(doctype, docname, "party")
+            elif frappe.db.has_column(doctype, "student"):
+                student = db.get_value(doctype, docname, "student")
         entity = data.get("entity")
         if entity == "direct":
             entity_type = "Payment Gateway"
@@ -266,7 +279,7 @@ def add_webhook_log(data):
             }
         )
         # Save the Webhook Log document
-        webhook_log.insert(ignore_permissions=True)
+        webhook_log.insert(ignore_permissions=True, ignore_links=True)
         # Commit immediately to ensure log is saved even if payment processing fails later
         frappe.db.commit()
     except Exception:
