@@ -252,7 +252,7 @@ def get_fee_headers(doc, data):
     if doctype in doctype_fields:
         total_field, current_field = doctype_fields[doctype]
 
-        if doctype in ["Event Participant", "Student Applicant"]:
+        if doctype in ["Event Participant", "Student Applicant", "Fees"]:
             total = current = getattr(doc, current_field, 0)
         else:
             # For other document types, fetch referenced document
