@@ -175,7 +175,7 @@ def get_student_details(controller, student):
         student_details["student_last_name"] = sanitized_last
     if date_of_birth:
         student_details["student_dob"] = date_of_birth
-    if student.gender:
+    if student.gender and student.gender.upper() in ("MALE", "FEMALE"):
         student_details["student_gender"] = student.gender.upper()
     if student.student_email_id:
         student_details["student_email"] = student.student_email_id
@@ -551,7 +551,7 @@ def _get_student_applicant_details(controller, applicant):
             student_details["student_dob"] = dob_str
 
     # Gender
-    if applicant.gender:
+    if applicant.gender and applicant.gender.upper() in ("MALE", "FEMALE"):
         student_details["student_gender"] = applicant.gender.upper()
 
     # Email
