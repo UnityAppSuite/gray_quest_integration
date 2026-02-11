@@ -88,11 +88,15 @@ def handle_payment_gateway_webhook(data):
         # Get payment details from the data
         payment_details = data.get("payment_details", {})
         amount = payment_details.get("amount")
-        # Update the transaction_id field in the document
+        # Update the transaction_id and reference_no fields in the document
         if hasattr(doc, "transaction_id"):
             doc.db_set("transaction_id", application_code)
         if hasattr(doc, "paid_amount"):
             doc.db_set("paid_amount", amount)
+        # Store bank_reference_id as reference_no (PG case)
+        bank_reference_id = payment_details.get("bank_reference_id")
+        if bank_reference_id and hasattr(doc, "reference_no"):
+            doc.db_set("reference_no", bank_reference_id)
         # Call the on_payment_authorized method on the document
         if payment_details.get("status") == "PAID":
             # Route based on fee_type for one-time payments
@@ -159,10 +163,15 @@ def handle_emi_webhook(data):
     application_details = data.get("application_details", {})
     application_code = application_details.get("code")
 
-    # Update the document with transaction ID and EMI payment status
-    db.set_value(
-        doctype, docname, {"transaction_id": application_code, "is_emi_payment": 1}
-    )
+    # Store UTR as reference_no (EMI case)
+    disbursement_details = data.get("disbursement_details") or {}
+    utr = disbursement_details.get("utr")
+
+    # Update the document with transaction ID, reference_no and EMI payment status
+    update_fields = {"transaction_id": application_code, "is_emi_payment": 1}
+    if utr:
+        update_fields["reference_no"] = utr
+    db.set_value(doctype, docname, update_fields)
 
     # Retrieve the document using doctype and docname
     doc = get_doc(doctype, docname)
