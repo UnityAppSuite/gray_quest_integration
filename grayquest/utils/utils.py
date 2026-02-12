@@ -65,7 +65,7 @@ def _get_event_ticket_payload(ticket_doc, data):
     furl = data.get("failure_url")
     payload = {
         "student_id": guardian.name,
-        "customer_mobile": guardian.mobile_number or "9999999999",
+        "customer_mobile": _clean_mobile_number(guardian.mobile_number or "9999999999"),
         "customer_details": get_customer_details(guardian),
         "fee_headers": get_fee_headers(ticket_doc, data),
         "notes": get_notes(ticket_doc, data),
@@ -105,13 +105,13 @@ def _get_student_payment_payload(controller, ref_doc, data):
         if student.applicant_name:
             customer_details["customer_first_name"] = student.applicant_name
         if student.email_id:
-            customer_details["customer_email"] = student.email_id
+            customer_details["customer_email"] = student.email_id.strip()
         if student.mobile:
             customer_mobile = student.mobile.replace("+91-", "").replace("+91", "")
     url = redirect_url or get_url()
     payload = {
         "student_id": student.name,
-        "customer_mobile": customer_mobile or student.student_mobile_number or "9999999999",
+        "customer_mobile": _clean_mobile_number(customer_mobile or student.student_mobile_number or "9999999999"),
         "fee_headers": get_fee_headers(ref_doc, data),
         "student_details": get_student_details(controller, student),
         "customer_details": customer_details,
@@ -157,7 +157,7 @@ def get_student_details(controller, student):
     if student.gender:
         student_details["student_gender"] = student.gender.upper()
     if student.student_email_id:
-        student_details["student_email"] = student.student_email_id
+        student_details["student_email"] = student.student_email_id.strip()
     if joining_date:
         joining_date = get_date_str(joining_date)
         student_details["student_admission_date"] = joining_date
@@ -192,7 +192,7 @@ def get_customer_details(guardian):
     if guardian.last_name:
         customer_details["customer_last_name"] = guardian.last_name
     if guardian.email_address:
-        customer_details["customer_email"] = guardian.email_address
+        customer_details["customer_email"] = guardian.email_address.strip()
     return customer_details
 
 
@@ -524,7 +524,7 @@ def _get_student_applicant_details(controller, applicant):
 
     # Email
     if applicant.email_id:
-        student_details["student_email"] = applicant.email_id
+        student_details["student_email"] = applicant.email_id.strip()
 
     # Program/Class ID
     if controller.pass_class_id and applicant.program:
@@ -579,7 +579,7 @@ def _get_student_applicant_customer_details(applicant):
         ""
     )
     if customer_email:
-        customer_details["customer_email"] = customer_email
+        customer_details["customer_email"] = customer_email.strip()
 
     return customer_details
 
@@ -714,7 +714,7 @@ def _get_student_notes(student):
     if student.gender:
         notes["student_gender"] = student.gender.upper()
     if student.student_email_id:
-        notes["student_email"] = student.student_email_id
+        notes["student_email"] = student.student_email_id.strip()
     if student.get("joining_date"):
         notes["student_admission_date"] = get_date_str(student.joining_date)
     return notes
@@ -746,7 +746,7 @@ def get_applicant_payload_direct(controller, kwargs):
             if len(guardian_parts) > 1:
                 customer_details["customer_last_name"] = " ".join(guardian_parts[1:])
     if kwargs.get("payer_email") or applicant.student_email_id:
-        customer_details["customer_email"] = kwargs.get("payer_email") or applicant.student_email_id
+        customer_details["customer_email"] = (kwargs.get("payer_email") or applicant.student_email_id).strip()
 
     notes = {
         "description": f"Deposit payment for {student_name}",
@@ -758,7 +758,7 @@ def get_applicant_payload_direct(controller, kwargs):
     if applicant.gender:
         notes["student_gender"] = applicant.gender.upper()
     if applicant.student_email_id:
-        notes["student_email"] = applicant.student_email_id
+        notes["student_email"] = applicant.student_email_id.strip()
 
     payload = {
         "student_id": applicant_id,
