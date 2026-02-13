@@ -93,7 +93,7 @@ def handle_payment_gateway_webhook(data):
             doc.db_set("transaction_id", application_code)
         if hasattr(doc, "paid_amount"):
             doc.db_set("paid_amount", amount)
-        # Store bank_reference_id as reference_no (PG case)
+        # Store bank_reference_id as reference_no on Payment Request
         bank_reference_id = payment_details.get("bank_reference_id")
         if bank_reference_id and hasattr(doc, "reference_no"):
             doc.db_set("reference_no", bank_reference_id)
@@ -179,7 +179,7 @@ def handle_emi_webhook(data):
             )
             return
 
-    # Store UTR as reference_no (EMI case)
+    # Store UTR as reference_no
     disbursement_details = data.get("disbursement_details") or {}
     utr = disbursement_details.get("utr")
 
@@ -330,21 +330,46 @@ def add_webhook_log(data):
             timestamp = get_datetime(timestamp)
         application_details = data.get("application_details", {})
         application_code = application_details.get("code")
-        udf_details = data.get("udf_details", {})
-        doctype = udf_details.get("udf_1")
-        docname = udf_details.get("udf_2")
+
+        # Resolve reference document: Payment Request > Fees > empty
+        doctype, docname = None, None
+        try:
+            udf_details = data.get("udf_details", {})
+            resolved_dt, resolved_dn, _ = resolve_payment_request(udf_details)
+            if resolved_dt and resolved_dn:
+                doctype, docname = resolved_dt, resolved_dn
+            elif data.get("entity") == "monthly-emi":
+                resolved_dt, resolved_dn = resolve_payment_request_from_emi_webhook(data)
+                if resolved_dt and resolved_dn:
+                    doctype, docname = resolved_dt, resolved_dn
+                else:
+                    # Try to at least find the Fees document
+                    student_uuid = (data.get("student_details") or {}).get("student_uuid")
+                    academic_year = (data.get("student_details") or {}).get("academic_year")
+                    if student_uuid and academic_year:
+                        fees_name = db.get_value("Fees", {
+                            "student": student_uuid,
+                            "academic_year": academic_year,
+                            "docstatus": 1,
+                        }, "name", order_by="creation desc")
+                        if fees_name:
+                            doctype, docname = "Fees", fees_name
+        except Exception:
+            pass
 
         student = None
-        if doctype and docname:
-            if doctype == "Payment Request":
-                student = db.get_value(doctype, docname, "party")
-            elif frappe.db.has_column(doctype, "student"):
-                student = db.get_value(doctype, docname, "student")
-        elif not student:
-            # Fallback: extract student from student_details.student_uuid
-            student_uuid = (data.get("student_details") or {}).get("student_uuid")
-            if student_uuid and db.exists("Student", student_uuid):
-                student = student_uuid
+        try:
+            if doctype and docname:
+                if doctype == "Payment Request":
+                    student = db.get_value(doctype, docname, "party")
+                elif frappe.db.has_column(doctype, "student"):
+                    student = db.get_value(doctype, docname, "student")
+            if not student:
+                student_uuid = (data.get("student_details") or {}).get("student_uuid")
+                if student_uuid and db.exists("Student", student_uuid):
+                    student = student_uuid
+        except Exception:
+            pass
 
         entity = data.get("entity")
         if entity == "direct":
