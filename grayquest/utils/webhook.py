@@ -204,6 +204,31 @@ def handle_emi_webhook(data):
             response["message"] = _("EMI already processed")
             return
 
+        # Safety net: if late fee was wrongly added after EMI initiation,
+        # remove it before processing payment
+        fee_details = data.get("fee_details") or {}
+        disbursed_amount = flt(
+            disbursement_details.get("disbursed_amount")
+            or fee_details.get("amount")
+        )
+        if disbursed_amount and flt(doc.grand_total) != disbursed_amount:
+            current_user = frappe.session.user
+            try:
+                frappe.set_user("Administrator")
+                fees = frappe.get_doc("Fees", doc.reference_name)
+                fees.adjust_late_fee(0, payment_term=doc.payment_term)
+                doc.db_set("grand_total", disbursed_amount)
+            except Exception:
+                frappe.log_error(
+                    title="EMI Disbursement: Late fee adjustment failed",
+                    message=(
+                        f"PR: {doc.name}, Fees: {doc.reference_name}, "
+                        f"PR Grand Total: {doc.grand_total}, Disbursed: {disbursed_amount}"
+                    ),
+                )
+            finally:
+                frappe.set_user(current_user)
+
         # Set mode of payment for GrayQuest EMI payments
         ensure_mode_of_payment_exists("GrayQuest EMI")
         doc.db_set("mode_of_payment", "GrayQuest EMI")
