@@ -4,6 +4,17 @@ import frappe
 from frappe.utils import flt, get_date_str, get_url
 
 
+def _sanitize_alpha(value):
+    """Remove non-alphabetic characters from a string for GrayQuest API validation.
+    Returns None if the result is empty, so callers can skip the field entirely.
+    GrayQuest rejects empty values and non-alphabet characters in name fields.
+    """
+    if not value:
+        return None
+    cleaned = re.sub(r'[^a-zA-Z]', '', str(value)).strip()
+    return cleaned or None
+
+
 def build_callback_url(payment_request):
     """
     Build callback URL for GrayQuest redirect after payment.
@@ -136,7 +147,7 @@ def get_student_details(controller, student):
         dict: A dictionary containing the student details.
     """
     # Format date of birth and joining date
-    date_of_birth = get_date_str(student.date_of_birth)
+    date_of_birth = get_date_str(student.date_of_birth) if student.date_of_birth else None
     joining_date = student.get("joining_date")
     student_status = student.get("student_status")
 
@@ -146,21 +157,25 @@ def get_student_details(controller, student):
 
     # Construct the student details dictionary
     student_details = {}
-    if student.first_name:
-        student_details["student_first_name"] = student.first_name
-    if student.middle_name:
-        student_details["student_middle_name"] = student.middle_name
-    if student.last_name:
-        student_details["student_last_name"] = student.last_name
+    first_name = _sanitize_alpha(student.first_name)
+    middle_name = _sanitize_alpha(student.middle_name)
+    last_name = _sanitize_alpha(student.last_name)
+    if first_name:
+        student_details["student_first_name"] = first_name
+    if middle_name:
+        student_details["student_middle_name"] = middle_name
+    if last_name:
+        student_details["student_last_name"] = last_name
     if date_of_birth:
         student_details["student_dob"] = date_of_birth
-    if student.gender:
+    if student.gender and student.gender.upper() in ("MALE", "FEMALE"):
         student_details["student_gender"] = student.gender.upper()
     if student.student_email_id:
         student_details["student_email"] = student.student_email_id.strip()
     if joining_date:
-        joining_date = get_date_str(joining_date)
-        student_details["student_admission_date"] = joining_date
+        formatted_joining_date = get_date_str(joining_date)
+        if formatted_joining_date:
+            student_details["student_admission_date"] = formatted_joining_date
     if student.blood_group:
         student_details["student_blood_group"] = student.blood_group
     student_details["student_type"] = "NEW" if not student_status or student_status == "New student" else "EXISTING"
@@ -185,12 +200,15 @@ def get_customer_details(guardian):
     """
     # Construct the customer details dictionary
     customer_details = {}
-    if guardian.first_name:
-        customer_details["customer_first_name"] = guardian.first_name
-    if guardian.middle_name:
-        customer_details["customer_middle_name"] = guardian.middle_name
-    if guardian.last_name:
-        customer_details["customer_last_name"] = guardian.last_name
+    first_name = _sanitize_alpha(guardian.first_name)
+    middle_name = _sanitize_alpha(guardian.middle_name)
+    last_name = _sanitize_alpha(guardian.last_name)
+    if first_name:
+        customer_details["customer_first_name"] = first_name
+    if middle_name:
+        customer_details["customer_middle_name"] = middle_name
+    if last_name:
+        customer_details["customer_last_name"] = last_name
     if guardian.email_address:
         customer_details["customer_email"] = guardian.email_address.strip()
     return customer_details
@@ -507,9 +525,12 @@ def _get_student_applicant_details(controller, applicant):
     full_name = applicant.student_name or applicant.applicant_name or ""
     name_parts = full_name.split() if full_name else []
     if name_parts:
-        student_details["student_first_name"] = name_parts[0]
-        if len(name_parts) > 1:
-            student_details["student_last_name"] = " ".join(name_parts[1:])
+        first_name = _sanitize_alpha(name_parts[0])
+        last_name = _sanitize_alpha(" ".join(name_parts[1:])) if len(name_parts) > 1 else None
+        if first_name:
+            student_details["student_first_name"] = first_name
+        if last_name:
+            student_details["student_last_name"] = last_name
 
     # Student Applicant is always NEW
     student_details["student_type"] = "NEW"
@@ -519,7 +540,7 @@ def _get_student_applicant_details(controller, applicant):
         student_details["student_dob"] = get_date_str(applicant.date_of_birth)
 
     # Gender
-    if applicant.gender:
+    if applicant.gender and applicant.gender.upper() in ("MALE", "FEMALE"):
         student_details["student_gender"] = applicant.gender.upper()
 
     # Email
@@ -567,9 +588,12 @@ def _get_student_applicant_customer_details(applicant):
     if guardian_name:
         name_parts = guardian_name.split() if guardian_name else []
         if name_parts:
-            customer_details["customer_first_name"] = name_parts[0]
-            if len(name_parts) > 1:
-                customer_details["customer_last_name"] = " ".join(name_parts[1:])
+            first_name = _sanitize_alpha(name_parts[0])
+            last_name = _sanitize_alpha(" ".join(name_parts[1:])) if len(name_parts) > 1 else None
+            if first_name:
+                customer_details["customer_first_name"] = first_name
+            if last_name:
+                customer_details["customer_last_name"] = last_name
 
     # Try to get email
     customer_email = (

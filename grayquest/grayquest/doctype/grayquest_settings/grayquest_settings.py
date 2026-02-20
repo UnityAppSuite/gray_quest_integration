@@ -72,20 +72,25 @@ class GrayQuestSettings(Document):
             )
 
     def get_headers(self):
-        if self.api_key and self.client_id and self.client_secret:
-            client_secret = self.get_password("client_secret")
-            api_key = self.get_password("api_key")
+        if not (self.api_key and self.client_id and self.client_secret):
+            frappe.throw(
+                _("GrayQuest API credentials are not configured. Please set API Key, Client ID, and Client Secret in GrayQuest Settings."),
+                title=_("GrayQuest Configuration Error"),
+            )
 
-            # Encode client_id and client_secret in base64
-            credentials = f"{self.client_id}:{client_secret}"
-            auth_token = base64.b64encode(credentials.encode()).decode()
+        client_secret = self.get_password("client_secret")
+        api_key = self.get_password("api_key")
 
-            # Headers
-            return {
-                "Authorization": f"Basic {auth_token}",
-                "GQ-API-Key": api_key,
-                "Content-Type": "application/json",
-            }
+        # Encode client_id and client_secret in base64
+        credentials = f"{self.client_id}:{client_secret}"
+        auth_token = base64.b64encode(credentials.encode()).decode()
+
+        # Headers
+        return {
+            "Authorization": f"Basic {auth_token}",
+            "GQ-API-Key": api_key,
+            "Content-Type": "application/json",
+        }
 
     def log_request(self, service_name, data, url=None, **kwargs):
         """Create an Integration Request log entry for GrayQuest API calls."""

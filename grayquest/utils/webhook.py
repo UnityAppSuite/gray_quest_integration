@@ -201,7 +201,7 @@ def handle_emi_webhook(data):
 
     except Exception as e:
         # Log the error and return an error message
-        frappe.log_error(f"EMI Webhook Error: {str(e)}", frappe.get_traceback())
+        frappe.log_error("EMI Webhook Error", frappe.get_traceback())
         response["message"] = _("Error in EMI Webhook")
 
 
