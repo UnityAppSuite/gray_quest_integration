@@ -42,16 +42,14 @@ def get_context(context):
                 "payment_details": payment_details,
             }
 
-        # Get controller and process response
-        controller = frappe.get_last_doc("GrayQuest Settings")
-        controller.handle_response(data)
-
-        # Determine redirect URL to payment page
+        # Extract udf_details for routing
         udf_details = data.get("udf_details", {})
         doctype = udf_details.get("udf_1")
+        payment_term = udf_details.get("udf_3")
         fee_hash = udf_details.get("udf_5")
         applicant_id = udf_details.get("udf_2") if doctype == "Student Applicant" else None
 
+        # Build redirect URL to the original payment/fee page
         if doctype == "Student Applicant" and applicant_id:
             redirect_url = f"/payment?applicant_id={applicant_id}"
         elif fee_hash:
@@ -67,6 +65,19 @@ def get_context(context):
                     redirect_url = "/"
             else:
                 redirect_url = "/"
+
+        # EMI: payment_term is "EMI" or not available in redirect data
+        # Don't process anything, just show EMI message and redirect to fee page
+        if doctype == "Fees" and (not payment_term or payment_term == "EMI"):
+            context.title = "EMI Form Submitted"
+            context.message = "You will get the receipt once the disbursal is successful."
+            context.redirect_url = redirect_url
+            context.is_emi = True
+            return
+
+        # Non-EMI: process response via handle_response
+        controller = frappe.get_last_doc("GrayQuest Settings")
+        controller.handle_response(data)
 
         frappe.local.response["type"] = "redirect"
         frappe.local.response["location"] = redirect_url

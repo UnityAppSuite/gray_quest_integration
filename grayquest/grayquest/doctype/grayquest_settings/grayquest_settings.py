@@ -271,51 +271,29 @@ class GrayQuestSettings(Document):
         Returns:
             dict: Result message
         """
-        from frappe.auth import LoginManager
-
         try:
-            login_manager = LoginManager()
-            login_manager.login_as("Administrator")
-
             # Extract data
             udf_details = data.get("udf_details", {})
             doctype = udf_details.get("udf_1")
             docname = udf_details.get("udf_2")
-            payment_term = udf_details.get("udf_3")
 
-            application_details = data.get("application_details", {})
-            transaction_id = application_details.get("code")
 
             payment_details = data.get("payment_details", {})
             status = payment_details.get("status")
-            amount = payment_details.get("amount")
-
-            if status != "PAID":
-                return {"message": "Payment not completed"}
 
             if not frappe.db.exists(doctype, docname):
                 frappe.log_error(f"GrayQuest: {doctype} {docname} does not exist")
                 return {"message": "Document not found"}
 
-            doc = frappe.get_doc(doctype, docname, ignore_permissions=True)
-
             if doctype == "Fees":
-                doc.on_payment_authorized(
-                    status="Completed",
-                    payment_term=payment_term,
-                    transaction_id=transaction_id,
-                    amount=amount
-                )
-                return {"message": "Payment Successful"}
+                if status != "PAID":
+                    return {"message": "Payment not completed"}
+                return {"message": "Payment successful for Fees"}
 
             elif doctype == "Student Applicant":
-                result = doc.on_payment_authorized(
-                    status="Completed",
-                    transaction_id=transaction_id,
-                    amount=amount
-                )
-                return result or {"message": "Applicant Payment Successful"}
-
+                if status != "PAID":
+                    return {"message": "Payment not completed"}
+                return {"message": "Payment successful for Student Applicant"}
             else:
                 frappe.log_error(f"GrayQuest: Unsupported doctype {doctype}")
                 return {"message": "Unsupported document type"}
@@ -323,8 +301,3 @@ class GrayQuestSettings(Document):
         except Exception as e:
             frappe.log_error("GrayQuest handle_response Error", frappe.get_traceback())
             return {"message": f"Payment processing failed: {str(e)}"}
-        finally:
-            try:
-                login_manager.logout()
-            except Exception:
-                pass
