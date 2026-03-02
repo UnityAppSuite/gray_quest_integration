@@ -176,8 +176,6 @@ def get_student_details(controller, student):
         student_details["student_blood_group"] = student.blood_group
     student_details["student_type"] = "NEW" if not student_status or student_status == "New student" else "EXISTING"
 
-    print(f"Pass Class ID: {controller.pass_class_id}")
-    frappe.log_error("Pass Class ID", f"Pass Class ID: {controller.pass_class_id}")
     if controller.pass_class_id:
         program_abbr = frappe.get_value("Program", student.program, "program_abbreviation")
         if program_abbr:
@@ -656,7 +654,7 @@ def get_fees_payload(controller, kwargs):
         "student_id": student_id,
         "customer_mobile": _clean_mobile_number(student.student_mobile_number or "9999999999"),
         "fee_headers": fee_headers,
-        "student_details": _get_student_details_minimal(student),
+        "student_details": _get_student_details_minimal(student, controller),
         "customer_details": customer_details,
         "notes": notes,
         "udf_details": {
@@ -719,14 +717,18 @@ def _apply_payment_prefixes(base_headers, controller):
     return result
 
 
-def _get_student_details_minimal(student):
-    """Get minimal student details (first_name, last_name, student_type) for GrayQuest payload."""
+def _get_student_details_minimal(student, controller=None):
+    """Get minimal student details (first_name, last_name, student_type, class_id) for GrayQuest payload."""
     student_status = student.get("student_status")
     details = {"student_type": "NEW" if not student_status or student_status == "New student" else "EXISTING"}
     if student.first_name:
         details["student_first_name"] = student.first_name
     if student.last_name:
         details["student_last_name"] = student.last_name
+    if controller and getattr(controller, "pass_class_id", False) and student.program:
+        program_abbr = frappe.get_value("Program", student.program, "program_abbreviation")
+        if program_abbr:
+            details["student_class_id"] = int(program_abbr)
     return details
 
 
