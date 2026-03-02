@@ -165,9 +165,11 @@ def handle_emi_webhook(data):
             # Set EMI fields on Fees parent doc
             doc.emi_application_code = application_code
             if event in ("emi.form.submitted", "emi.process.completed", "emi.disbursed"):
-                doc.is_emi_payment = 1
+                if hasattr(doc, "is_emi_payment"):
+                    doc.db_set("is_emi_payment", 1)
             elif event in ("emi.rejected", "emi.backout"):
-                doc.is_emi_payment = 0
+                if hasattr(doc, "is_emi_payment"):
+                    doc.db_set("is_emi_payment", 0)
 
             # Update EMI status in the fees document
             update_emi_status(doc, event, timestamp)

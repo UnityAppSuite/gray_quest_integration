@@ -151,10 +151,6 @@ def get_student_details(controller, student):
     joining_date = student.get("joining_date")
     student_status = student.get("student_status")
 
-    # Fetch program name
-    program_name = frappe.get_value("Program", student.program, "program_name")
-    sequence = frappe.get_value("Program", student.program, "sequence")
-
     # Construct the student details dictionary
     student_details = {}
     first_name = _sanitize_alpha(student.first_name)
@@ -180,11 +176,15 @@ def get_student_details(controller, student):
         student_details["student_blood_group"] = student.blood_group
     student_details["student_type"] = "NEW" if not student_status or student_status == "New student" else "EXISTING"
 
+    print(f"Pass Class ID: {controller.pass_class_id}")
+    frappe.log_error("Pass Class ID", f"Pass Class ID: {controller.pass_class_id}")
     if controller.pass_class_id:
-        if program_name.isdigit():
-            student_details["student_class_id"] = int(program_name)
-        elif sequence:
-            student_details["student_class_id"] = int(sequence)
+        program_abbr = frappe.get_value("Program", student.program, "program_abbreviation")
+        if program_abbr:
+            student_details["student_class_id"] = int(program_abbr)
+        else:
+            frappe.log_error(title="Program Abbreviation", message="Program Abbreviation not found")
+
     return student_details
 
 
