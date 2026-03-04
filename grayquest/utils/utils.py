@@ -655,7 +655,7 @@ def get_fees_payload(controller, kwargs):
         "student_id": student_id,
         "customer_mobile": _clean_mobile_number(student.student_mobile_number or "9999999999"),
         "fee_headers": fee_headers,
-        "student_details": _get_student_details_minimal(controller, student),
+        "student_details": _get_student_details_minimal(controller, student, kwargs),
         "customer_details": customer_details,
         "notes": notes,
         "udf_details": {
@@ -718,7 +718,7 @@ def _apply_payment_prefixes(base_headers, controller):
     return result
 
 
-def _get_student_details_minimal(controller, student):
+def _get_student_details_minimal(controller, student, kwargs=None):
     """Get minimal student details (first_name, last_name, student_type) for GrayQuest payload."""
     student_status = student.get("student_status")
     details = {"student_type": "NEW" if not student_status or student_status == "New student" else "EXISTING"}
@@ -727,7 +727,10 @@ def _get_student_details_minimal(controller, student):
     if student.last_name:
         details["student_last_name"] = student.last_name
 
-    class_id = _get_class_id(controller, student.program)
+    program = student.program
+    if kwargs and kwargs.get("reference_doctype") == "Fees" and kwargs.get("reference_docname"):
+        program = frappe.db.get_value("Fees", kwargs["reference_docname"], "program") or program
+    class_id = _get_class_id(controller, program)
     if class_id is not None:
         details["student_class_id"] = class_id
 
