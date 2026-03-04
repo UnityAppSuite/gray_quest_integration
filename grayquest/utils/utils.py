@@ -176,12 +176,9 @@ def get_student_details(controller, student):
         student_details["student_blood_group"] = student.blood_group
     student_details["student_type"] = "NEW" if not student_status or student_status == "New student" else "EXISTING"
 
-    if controller.pass_class_id:
-        program_abbr = frappe.get_value("Program", student.program, "program_abbreviation")
-        if program_abbr:
-            student_details["student_class_id"] = int(program_abbr)
-        else:
-            frappe.log_error(title="Program Abbreviation", message="Program Abbreviation not found")
+    class_id = _get_class_id(controller, student.program)
+    if class_id is not None:
+        student_details["student_class_id"] = class_id
 
     return student_details
 
@@ -545,14 +542,9 @@ def _get_student_applicant_details(controller, applicant):
     if applicant.email_id:
         student_details["student_email"] = applicant.email_id.strip()
 
-    # Program/Class ID
-    if controller.pass_class_id and applicant.program:
-        program_name = frappe.get_value("Program", applicant.program, "program_name") or applicant.program
-        sequence = frappe.get_value("Program", applicant.program, "sequence")
-        if program_name and str(program_name).isdigit():
-            student_details["student_class_id"] = int(program_name)
-        elif sequence:
-            student_details["student_class_id"] = int(sequence)
+    class_id = _get_class_id(controller, applicant.program)
+    if class_id is not None:
+        student_details["student_class_id"] = class_id
 
     return student_details
 
@@ -606,6 +598,15 @@ def _get_student_applicant_customer_details(applicant):
     return customer_details
 
 
+def _get_class_id(controller, program):
+    """Get class_id from program_abbreviation if pass_class_id is enabled. """
+    if controller.pass_class_id and program:
+        abbr = frappe.get_value("Program", program, "program_abbreviation")
+        if abbr:
+            return int(abbr)
+    return None
+
+
 def _clean_mobile_number(mobile):
     """
     Clean mobile number to 10 digits for GrayQuest API.
@@ -654,7 +655,7 @@ def get_fees_payload(controller, kwargs):
         "student_id": student_id,
         "customer_mobile": _clean_mobile_number(student.student_mobile_number or "9999999999"),
         "fee_headers": fee_headers,
-        "student_details": _get_student_details_minimal(student, controller),
+        "student_details": _get_student_details_minimal(controller, student),
         "customer_details": customer_details,
         "notes": notes,
         "udf_details": {
@@ -717,18 +718,19 @@ def _apply_payment_prefixes(base_headers, controller):
     return result
 
 
-def _get_student_details_minimal(student, controller=None):
-    """Get minimal student details (first_name, last_name, student_type, class_id) for GrayQuest payload."""
+def _get_student_details_minimal(controller, student):
+    """Get minimal student details (first_name, last_name, student_type) for GrayQuest payload."""
     student_status = student.get("student_status")
     details = {"student_type": "NEW" if not student_status or student_status == "New student" else "EXISTING"}
     if student.first_name:
         details["student_first_name"] = student.first_name
     if student.last_name:
         details["student_last_name"] = student.last_name
-    if controller and getattr(controller, "pass_class_id", False) and student.program:
-        program_abbr = frappe.get_value("Program", student.program, "program_abbreviation")
-        if program_abbr:
-            details["student_class_id"] = int(program_abbr)
+
+    class_id = _get_class_id(controller, student.program)
+    if class_id is not None:
+        details["student_class_id"] = class_id
+
     return details
 
 
@@ -762,6 +764,10 @@ def get_applicant_payload_direct(controller, kwargs):
         student_details["student_first_name"] = name_parts[0]
         if len(name_parts) > 1:
             student_details["student_last_name"] = " ".join(name_parts[1:])
+
+    class_id = _get_class_id(controller, applicant.program)
+    if class_id is not None:
+        student_details["student_class_id"] = class_id
 
     customer_details = {}
     guardian_name = getattr(applicant, 'guardian_name', None) or getattr(applicant, 'father_name', None) or student_name
