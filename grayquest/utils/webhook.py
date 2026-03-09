@@ -283,7 +283,7 @@ def add_webhook_log(data):
             student = db.get_value(doctype, docname, "party")
         elif doctype == "Fees":
             student = db.get_value(doctype, docname, "student")
-        elif frappe.db.has_column(doctype, "student"):
+        elif doctype and frappe.db.has_column(doctype, "student"):
             student = db.get_value(doctype, docname, "student")
         else:
             student = None

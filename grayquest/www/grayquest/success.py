@@ -75,10 +75,7 @@ def get_context(context):
             context.is_emi = True
             return
 
-        # Non-EMI: process response via handle_response
-        controller = frappe.get_last_doc("GrayQuest Settings")
-        controller.handle_response(data)
-
+        # Just redirect — payment processing is handled by the webhook
         frappe.local.response["type"] = "redirect"
         frappe.local.response["location"] = redirect_url
 
