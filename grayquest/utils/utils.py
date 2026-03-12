@@ -76,7 +76,7 @@ def _get_event_ticket_payload(ticket_doc, data):
     furl = data.get("failure_url")
     payload = {
         "student_id": guardian.name,
-        "customer_mobile": _clean_mobile_number(guardian.mobile_number or "9999999999"),
+        "customer_mobile": _clean_mobile_number(guardian.mobile_number or ""),
         "customer_details": get_customer_details(guardian),
         "fee_headers": get_fee_headers(ticket_doc, data),
         "notes": get_notes(ticket_doc, data),
@@ -122,7 +122,7 @@ def _get_student_payment_payload(controller, ref_doc, data):
     url = redirect_url or get_url()
     payload = {
         "student_id": student.name,
-        "customer_mobile": _clean_mobile_number(customer_mobile or student.student_mobile_number or "9999999999"),
+        "customer_mobile": _clean_mobile_number(customer_mobile or student.student_mobile_number or ""),
         "fee_headers": get_fee_headers(ref_doc, data),
         "student_details": get_student_details(controller, student),
         "customer_details": customer_details,
@@ -473,7 +473,7 @@ def _get_student_applicant_payload(controller, ref_doc, data):
     applicant = frappe.get_doc("Student Applicant", ref_doc.reference_name)
 
     # Get and clean mobile number
-    raw_mobile = applicant.student_mobile_number or applicant.mobile or "9999999999"
+    raw_mobile = applicant.student_mobile_number or applicant.mobile or ""
     customer_mobile = _clean_mobile_number(raw_mobile)
 
     # Build callback URL (simple - just payment_request)
@@ -622,8 +622,8 @@ def _clean_mobile_number(mobile):
     if len(digits) > 10:
         digits = digits[-10:]
     if len(digits) < 10:
-        # Invalid mobile number - use default to not block payment flow
-        digits = "9999999999"
+        # Invalid mobile number - pass empty to let GrayQuest handle it
+        digits = ""
     return digits
 
 
@@ -653,7 +653,7 @@ def get_fees_payload(controller, kwargs):
 
     payload = {
         "student_id": student_id,
-        "customer_mobile": _clean_mobile_number(student.student_mobile_number or "9999999999"),
+        "customer_mobile": _clean_mobile_number(student.student_mobile_number or ""),
         "fee_headers": fee_headers,
         "student_details": _get_student_details_minimal(controller, student, kwargs),
         "customer_details": customer_details,
@@ -797,7 +797,7 @@ def get_applicant_payload_direct(controller, kwargs):
 
     payload = {
         "student_id": applicant_id,
-        "customer_mobile": _clean_mobile_number(kwargs.get("payer_phone") or applicant.student_mobile_number or "9999999999"),
+        "customer_mobile": _clean_mobile_number(kwargs.get("payer_phone") or applicant.student_mobile_number or ""),
         "fee_headers": fee_headers,
         "student_details": student_details,
         "customer_details": customer_details,
