@@ -1,6 +1,6 @@
 import frappe
 from frappe import _, db, get_doc, response
-from frappe.utils import flt, get_datetime, now_datetime
+from frappe.utils import flt, get_datetime, getdate, now_datetime, nowdate
 
 from grayquest.utils import EMI_STATUS_MAPPING
 
@@ -13,6 +13,18 @@ def ensure_mode_of_payment_exists(mode_name):
             "mode_of_payment": mode_name,
             "type": "General"
         }).insert(ignore_permissions=True)
+
+
+def _parse_webhook_date(date_str):
+    """Parse DD-MM-YYYY or DD-MM-YYYY HH:MM:SS to YYYY-MM-DD string.
+    Returns nowdate() if date_str is None or unparseable."""
+    if not date_str:
+        return nowdate()
+    try:
+        parts = date_str.strip().split(" ")[0].split("-")
+        return str(getdate(f"{parts[2]}-{parts[1]}-{parts[0]}"))
+    except Exception:
+        return nowdate()
 
 
 def resolve_payment_request(udf_details):
@@ -114,13 +126,18 @@ def handle_payment_gateway_webhook(data):
                 ensure_mode_of_payment_exists("GrayQuest")
                 doc.db_set("mode_of_payment", "GrayQuest")
                 doc.reload()  # Refresh in-memory object for payment_entry()
+                # Use paid_on date from webhook as posting_date, fallback to today
+                frappe.flags.webhook_posting_date = _parse_webhook_date(
+                    payment_details.get("paid_on")
+                )
                 doc.on_payment_authorized(status="Completed")
                 response["message"] = _("Payment successfully captured and processed.")
             else:
                 if hasattr(doc, "validate_payment"):
                     doc.validate_payment(payment_details)
                 else:
-                    create_payment_entry(doc, amount=amount, transaction_id=application_code)
+                    posting_date = _parse_webhook_date(payment_details.get("paid_on"))
+                    create_payment_entry(doc, amount=amount, posting_date=posting_date, reference_date=posting_date, transaction_id=application_code)
                 response["message"] = _("Payment successfully captured and processed.")
 
     elif data.get("event") == "dt.payment.order.created":
@@ -233,6 +250,10 @@ def handle_emi_webhook(data):
         ensure_mode_of_payment_exists("GrayQuest EMI")
         doc.db_set("mode_of_payment", "GrayQuest EMI")
         doc.reload()  # Refresh in-memory object for payment_entry()
+        # Use disbursement date from webhook as posting_date, fallback to today
+        frappe.flags.webhook_posting_date = _parse_webhook_date(
+            disbursement_details.get("date")
+        )
         doc.on_payment_authorized(status="Completed")
         response["message"] = _("EMI Disbursed")
         return
