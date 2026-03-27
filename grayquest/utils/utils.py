@@ -641,8 +641,9 @@ def get_fees_payload(controller, kwargs):
 
     fee_hash = kwargs.get("fee_hash", "")
     split_payments = kwargs.get("split_payments", {})
+    split_payments_emi = kwargs.get("split_payments_emi")
     amount = flt(kwargs.get("amount", 0), 2)
-    fee_headers = _build_fee_headers(split_payments, controller, amount)
+    fee_headers = _build_fee_headers(split_payments, controller, amount, split_payments_emi=split_payments_emi)
 
     notes = {
         "description": f"Fee payment for {student.student_name}",
@@ -674,7 +675,7 @@ def get_fees_payload(controller, kwargs):
     return payload
 
 
-def _build_fee_headers(split_payments, controller=None, amount=None):
+def _build_fee_headers(split_payments, controller=None, amount=None, split_payments_emi=None):
     """Build fee_headers with EMI/PG prefixes when split payment enabled, else use default_label."""
     if not split_payments or not isinstance(split_payments, dict):
         if controller and controller.default_label and amount:
@@ -689,12 +690,13 @@ def _build_fee_headers(split_payments, controller=None, amount=None):
         )
         frappe.throw("Unable to process payment. Please contact support.")
 
-    base_headers = {label: flt(amt, 2) for label, amt in split_payments.items()}
-    return _apply_payment_prefixes(base_headers, controller)
+    pg_headers = {label: flt(amt, 2) for label, amt in split_payments.items()}
+    emi_headers = {label: flt(amt, 2) for label, amt in split_payments_emi.items()} if split_payments_emi else pg_headers
+    return _apply_payment_prefixes(pg_headers, controller, emi_headers=emi_headers)
 
 
-def _apply_payment_prefixes(base_headers, controller):
-    """Apply _EMI/_PG suffixes to fee headers. Throws error if neither EMI nor PG is enabled."""
+def _apply_payment_prefixes(pg_headers, controller, emi_headers=None):
+    """Apply _EMI/_PG suffixes to fee headers using separate amounts for each mode."""
     if not controller:
         frappe.log_error(title="GrayQuest Configuration Error", message="GrayQuest Settings not configured.")
         frappe.throw("Unable to process payment. Please contact support.")
@@ -711,9 +713,10 @@ def _apply_payment_prefixes(base_headers, controller):
 
     result = {}
     if pg_enabled:
-        result.update({f"{label}_PG": amt for label, amt in base_headers.items()})
+        result.update({f"{label}_PG": amt for label, amt in pg_headers.items()})
     if emi_enabled:
-        result.update({f"{label}_EMI": amt for label, amt in base_headers.items()})
+        headers = emi_headers or pg_headers
+        result.update({f"{label}_EMI": amt for label, amt in headers.items()})
 
     return result
 
