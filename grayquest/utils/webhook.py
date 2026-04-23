@@ -175,7 +175,7 @@ def handle_emi_webhook(data):
             update_emi_status(doc, event, timestamp)
 
             # Remove payment plan discount once user has committed to EMI
-            if event == "emi.form.submitted":
+            if event in ("emi.form.submitted", "emi.process.completed", "emi.disbursed"):
                 doc.remove_payment_plan_discount()
 
             # If the event is 'emi.disbursed', handle based on tranche type
