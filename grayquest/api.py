@@ -20,7 +20,25 @@ def check_payment_status(payment_request):
 @frappe.whitelist(allow_guest=True)
 def handle_payment_callback(**kwargs):
     """
-    Handle redirect from GrayQuest after payment.
+    Handle the browser redirect from GrayQuest after payment.
+
+    UI-only. The Payment Entry is created exclusively by the webhook
+    (`dt.payment.captured` / `emi.disbursed`), which carries the authoritative
+    settled amount. The browser redirect only carries `payment_request`,
+    `status`, and `application_code` — not the amount — so creating a PE here
+    would force us to use PR.grand_total, which can drift from what the
+    gateway actually charged (in-session concessions, late-fee waivers,
+    partial-payment split rebalancing). That drift was the root cause of the
+    historical PE-vs-webhook gap audited in
+    `audits/2026-05-20-grayquest/webhook_lt_pe.csv`.
+
+    What this handler does:
+      1. Persist `application_code` as `transaction_id` on the PR so the
+         webhook can correlate (and so the status page has something to
+         display while waiting).
+      2. Redirect the parent to the payment status page. That page reads
+         `PR.status`, which will flip to "Paid" when the webhook submits
+         the PE. Until then it shows the in-flight state.
 
     GrayQuest passes: payment_request, status, application_code.
     Note: GrayQuest appends params with '?' instead of '&'.
@@ -44,68 +62,19 @@ def handle_payment_callback(**kwargs):
         payment_hash = frappe.db.get_value("Payment Request", payment_request, "payment_hash")
         return_url = f"/payment?payment_request={payment_hash}" if payment_hash else "/"
 
-        # Skip if already paid
-        if frappe.db.get_value("Payment Request", payment_request, "status") == "Paid":
-            frappe.local.response["type"] = "redirect"
-            frappe.local.response["location"] = return_url
-            return
-
-        # Security: Require application_code to prevent URL tampering
-        # GrayQuest always sends application_code on successful payment
+        # Persist the application_code on the PR so the webhook can correlate
+        # even if it arrives after the parent has landed on the status page.
+        # No PE work happens here.
         if status == "success" and application_code:
-            frappe.db.set_value("Payment Request", payment_request, "transaction_id", application_code)
-            doc = frappe.get_doc("Payment Request", payment_request)
-
-            # Check if this is Student Applicant - handle one-time fee payment
-            if doc.reference_doctype == "Student Applicant":
-                _handle_student_applicant_one_time_fee_callback(doc, application_code)
-            else:
-                # Standard flow for other reference doctypes
-                doc.on_payment_authorized(status="Completed")
-
+            frappe.db.set_value(
+                "Payment Request", payment_request, "transaction_id", application_code
+            )
             frappe.db.commit()
 
         frappe.local.response["type"] = "redirect"
         frappe.local.response["location"] = return_url
 
-    except Exception as e:
+    except Exception:
         frappe.log_error(title="GrayQuest Callback Error", message=frappe.get_traceback())
         frappe.local.response["type"] = "redirect"
         frappe.local.response["location"] = "/"
-
-
-def _handle_student_applicant_one_time_fee_callback(pr_doc, transaction_id: str):
-    """
-    Handle one-time fee payment for Student Applicant via callback.
-
-    Checks if the payment is for one-time fee (amount matches one_time_fee_amount)
-    and routes to validate_one_time_payment. Otherwise, uses standard flow.
-
-    Args:
-        pr_doc: Payment Request document
-        transaction_id (str): GrayQuest transaction ID (application_code)
-    """
-    from frappe.utils import flt
-
-    # Get Student Applicant document
-    applicant = frappe.get_doc("Student Applicant", pr_doc.reference_name)
-    payment_amount = flt(pr_doc.grand_total)
-    one_time_fee = flt(getattr(applicant, 'one_time_fee_amount', 0))
-
-    # Prepare payment data
-    payment_data = {
-        "amount": payment_amount,
-        "transaction_id": transaction_id,
-    }
-
-    # Check if this is one-time fee payment (amount matches one_time_fee_amount)
-    if one_time_fee > 0 and payment_amount == one_time_fee:
-        # One-time fee payment - call validate_one_time_payment
-        if hasattr(applicant, 'validate_one_time_payment'):
-            applicant.validate_one_time_payment(data=payment_data, payment_mode="Online")
-        else:
-            # Fallback to standard flow if method doesn't exist
-            pr_doc.on_payment_authorized(status="Completed")
-    else:
-        # Standard flow for other Student Applicant payments (not one-time fee)
-        pr_doc.on_payment_authorized(status="Completed")

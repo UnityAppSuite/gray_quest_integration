@@ -27,6 +27,80 @@ def _parse_webhook_date(date_str):
         return nowdate()
 
 
+def _align_pr_to_settled_amount(doc, settled_amount):
+    """Pull Payment Request.grand_total down to what the gateway actually settled.
+
+    The gateway can settle less than PR.grand_total (in-session concession,
+    late-fee waiver during checkout). on_payment_authorized builds the Payment
+    Entry from PR.grand_total, so without this the PE over-books vs cash received.
+
+    Mirrors the EMI safety net in handle_emi_webhook(): try to zero the late_fee
+    on the linked Fees schedule, then force grand_total to the settled amount.
+    """
+    if not settled_amount or abs(flt(doc.grand_total) - flt(settled_amount)) <= 0.5:
+        return
+    current_user = frappe.session.user
+    try:
+        frappe.set_user("Administrator")
+        if (
+            getattr(doc, "reference_doctype", None) == "Fees"
+            and getattr(doc, "reference_name", None)
+            and getattr(doc, "payment_term", None)
+        ):
+            try:
+                fees = frappe.get_doc("Fees", doc.reference_name)
+                fees.adjust_late_fee(0, payment_term=doc.payment_term)
+            except Exception:
+                frappe.log_error(
+                    title="PG Webhook: Late fee adjustment failed",
+                    message=(
+                        f"PR: {doc.name}, Fees: {doc.reference_name}, "
+                        f"PR Grand Total: {doc.grand_total}, Settled: {settled_amount}\n"
+                        f"{frappe.get_traceback()}"
+                    ),
+                )
+        doc.db_set("grand_total", flt(settled_amount))
+    finally:
+        frappe.set_user(current_user)
+
+
+def _verify_paid_amount_matches_webhook(doctype, docname, payment_details):
+    """When the PR is already Paid (typically by the browser callback), verify
+    the linked Payment Entry's paid_amount matches the webhook amount.
+
+    A positive PE - webhook means the PE was built from PR.grand_total before
+    the webhook arrived with the authoritative settled amount — that's the
+    over-booking pattern we can't fix in-place without cancelling submitted GL.
+    Log a Payment Reconciliation Required error so finance can post a JV.
+    """
+    if doctype != "Payment Request":
+        return
+    settled = flt(payment_details.get("amount"))
+    if not settled:
+        return
+    pe = frappe.db.get_value(
+        "Payment Entry",
+        {"payment_request": docname, "docstatus": 1},
+        ["name", "paid_amount"],
+        as_dict=True,
+    )
+    if not pe or abs(flt(pe.paid_amount) - settled) <= 0.5:
+        return
+    frappe.log_error(
+        title="Payment Reconciliation Required: PE paid_amount != webhook amount",
+        message=(
+            f"Payment Request: {docname}\n"
+            f"Payment Entry: {pe.name}\n"
+            f"PE paid_amount: {pe.paid_amount}\n"
+            f"Webhook settled amount: {settled}\n"
+            f"Difference (PE - webhook): {flt(pe.paid_amount) - settled}\n\n"
+            "PE was created from PR.grand_total (likely via browser callback) "
+            "before the webhook arrived with the authoritative settled amount. "
+            "Manual JV / refund may be required."
+        ),
+    )
+
+
 def resolve_payment_request(udf_details):
     """Resolve Payment Request doctype and docname from udf_details.
 
@@ -87,11 +161,20 @@ def handle_payment_gateway_webhook(data):
         # Get application code from application details
         application_code = application_details.get("code")
 
-        # Check if already paid via callback - avoid re-processing
+        # Defensive: if the PR is somehow already Paid by the time we get here,
+        # do NOT re-create a PE. The browser callback no longer submits a PE
+        # (see grayquest.api.handle_payment_callback), so this branch should
+        # normally only fire on:
+        #   - duplicate webhook delivery (GrayQuest retries)
+        #   - manual admin marking the PR Paid
+        #   - some other internal path setting the status
+        # In all those cases we still verify the existing PE booked the same
+        # amount the gateway actually settled, and log a reconciliation
+        # request if not.
         current_status = db.get_value(doctype, docname, "status") if frappe.db.has_column(doctype, "status") else None
         if current_status == "Paid":
-            # Already processed via callback - just acknowledge webhook
-            response["message"] = _("Payment already processed via callback")
+            _verify_paid_amount_matches_webhook(doctype, docname, data.get("payment_details", {}))
+            response["message"] = _("Payment already processed")
             return
 
         # Not yet paid - process via webhook (existing behavior)
@@ -125,6 +208,10 @@ def handle_payment_gateway_webhook(data):
                 # Set mode of payment for GrayQuest PG payments
                 ensure_mode_of_payment_exists("GrayQuest")
                 doc.db_set("mode_of_payment", "GrayQuest")
+                # Align grand_total to what the gateway actually settled so the
+                # PE created by on_payment_authorized reflects real cash received
+                # (handles in-session concessions / late-fee waivers at the gateway).
+                _align_pr_to_settled_amount(doc, amount)
                 doc.reload()  # Refresh in-memory object for payment_entry()
                 # Use paid_on date from webhook as posting_date, fallback to today
                 frappe.flags.webhook_posting_date = _parse_webhook_date(
