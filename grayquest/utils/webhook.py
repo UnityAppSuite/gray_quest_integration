@@ -65,6 +65,48 @@ def resolve_payment_request(udf_details):
     return doctype, docname, fee_type
 
 
+def _reconcile_late_fee_against_webhook(pr_doc, webhook_amount):
+	"""Roll back any late-fee bump that landed between payment and webhook.
+
+	When PR.grand_total exceeds the amount the parent actually paid, subtract
+	the gap from the term's current late fee and call `adjust_late_fee` to
+	cascade the correction through Fee Component, Payment Schedule, Fees
+	totals, GL entries, splits, and the PR itself.
+	"""
+	try:
+		gap = flt(pr_doc.grand_total) - flt(webhook_amount)
+		if gap <= 0 or pr_doc.reference_doctype != "Fees" or not pr_doc.payment_term:
+			return
+
+		fees = frappe.get_doc("Fees", pr_doc.reference_name)
+		schedule = next(
+			(s for s in fees.payment_schedule if s.payment_term == pr_doc.payment_term),
+			None,
+		)
+		if not schedule:
+			return
+
+		new_late_fee = flt(schedule.late_fee) - gap
+		if new_late_fee < 0 or new_late_fee >= flt(schedule.late_fee):
+			return
+
+		fees.adjust_late_fee(new_late_fee, payment_term=pr_doc.payment_term)
+		pr_doc.reload()
+		frappe.log_error(
+			title="GrayQuest late-fee auto-correction",
+			message=(
+				f"PR: {pr_doc.name} | Fees: {fees.name} | Term: {pr_doc.payment_term}\n"
+				f"Webhook amount: {webhook_amount} | Gap: {gap}\n"
+				f"Term late fee: {flt(schedule.late_fee)} → {new_late_fee}"
+			),
+		)
+	except Exception:
+		frappe.log_error(
+			title="GrayQuest late-fee reconciliation failed",
+			message=frappe.get_traceback(),
+		)
+
+
 def handle_payment_gateway_webhook(data):
     """
     Handle Payment Gateway Webhook
@@ -130,6 +172,8 @@ def handle_payment_gateway_webhook(data):
                 frappe.flags.webhook_posting_date = _parse_webhook_date(
                     payment_details.get("paid_on")
                 )
+                # Roll back late fee escalations between paid_on and webhook receipt.
+                _reconcile_late_fee_against_webhook(doc, amount)
                 doc.on_payment_authorized(status="Completed")
                 response["message"] = _("Payment successfully captured and processed.")
             else:
