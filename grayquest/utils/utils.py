@@ -310,8 +310,8 @@ def _get_ticket_fee_headers(ticket_doc, data):
     event = frappe.get_doc("Event Listing", ticket_doc.event)
 
     # Get selected payment gateway from ticket
-    selected_gateway = ticket_doc.custom_selected_payment_gateway
-    selected_gateway_name = ticket_doc.custom_selected_payment_gateway_name
+    selected_gateway = ticket_doc.payment_gateway_type
+    selected_gateway_name = ticket_doc.payment_gateway_account
 
     # Check if all students are in same grade
     unique_grades = list(students_by_grade.keys())
@@ -396,7 +396,7 @@ def _calculate_grade_breakdown(ticket_doc, students_by_grade):
     event = frappe.get_doc("Event Listing", ticket_doc.event)
     student_fee_per_student = event.student_fee or 0
 
-    total_seat_charges = ticket_doc.custom_seat_pricing_total or 0
+    total_seat_charges = ticket_doc.seat_pricing_total or 0
 
     grade_breakdown = {}
 
@@ -417,7 +417,7 @@ def _calculate_grade_breakdown(ticket_doc, students_by_grade):
             })
             grade_seat_count += student_seat_count
 
-        total_seats = ticket_doc.custom_free_seats_count + ticket_doc.custom_chargeable_seats_count
+        total_seats = ticket_doc.free_seats_count + ticket_doc.chargeable_seats_count
 
         # Proportional seat charges
         if total_seats > 0:
