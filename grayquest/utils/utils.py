@@ -59,21 +59,23 @@ def get_payload(controller, data):
 
     # Handle Ticket payments
     if doctype == "Ticket":
-        payload = _get_event_ticket_payload(ref_doc, data)
+        payload = _get_event_ticket_payload(controller, ref_doc, data)
     else:
         payload = _get_student_payment_payload(controller, ref_doc, data)
 
     return payload
 
 
-def _get_event_ticket_payload(ticket_doc, data):
+def _get_event_ticket_payload(controller, ticket_doc, data):
     """
     Constructs payload for Event Ticket payments.
     """
-    # Get customer details from ticket
     guardian = frappe.get_doc("Guardian", ticket_doc.customer)
     surl = data.get("success_url")
     furl = data.get("failure_url")
+
+    student_details = _get_ticket_student_details(controller, ticket_doc)
+
     payload = {
         "student_id": guardian.name,
         "customer_mobile": _clean_mobile_number(guardian.mobile_number or "9999999999"),
@@ -86,7 +88,41 @@ def _get_event_ticket_payload(ticket_doc, data):
             "error_url": furl or f"{get_url()}/walsh/events",
         },
     }
+
+    if student_details:
+        payload["student_details"] = student_details
+
     return payload
+
+
+def _get_ticket_student_details(controller, ticket_doc):
+    """
+    Build student_details for a Ticket.
+    GrayQuest requires a single dict — always returns the first allocated student's details.
+    """
+    if not hasattr(ticket_doc, 'seats') or not ticket_doc.seats:
+        return None
+
+    seen = set()
+    student_ids = []
+    for seat in ticket_doc.seats:
+        if seat.allocated_student and seat.allocated_student not in seen:
+            seen.add(seat.allocated_student)
+            student_ids.append(seat.allocated_student)
+
+    if not student_ids:
+        return None
+
+    details_list = []
+    for student_id in student_ids:
+        if frappe.db.exists("Student", student_id):
+            student = frappe.get_doc("Student", student_id)
+            details_list.append(get_student_details(controller, student))
+
+    if not details_list:
+        return None
+
+    return details_list[0]
 
 
 def _get_student_payment_payload(controller, ref_doc, data):
