@@ -381,7 +381,7 @@ def _get_ticket_fee_headers(ticket_doc, data):
     for grade, amount in grade_breakdown.items():
         fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
         if fee_header_name:
-            fee_headers[fee_header_name] = amount
+            fee_headers[fee_header_name] = fee_headers.get(fee_header_name, 0) + amount
             has_fee_headers = True
 
     # If we successfully added fee headers, return them without total/current payable
