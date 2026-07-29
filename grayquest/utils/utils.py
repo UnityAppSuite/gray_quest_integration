@@ -171,8 +171,8 @@ def _get_student_payment_payload(controller, ref_doc, data):
             "udf_5": getattr(ref_doc, "payment_term", None),
         },
         "redirection": {
-            "success_url": data.get("success_url") or f"{url}/grayquest-payment",
-            "error_url": data.get("failure_url") or f"{url}/grayquest-payment",
+            "success_url": data.get("success_url") or f"{url}/tgaa-connect/payment-status?status=success&payment_request={getattr(ref_doc, 'payment_hash', '') or ''}",
+            "error_url": data.get("failure_url") or f"{url}/tgaa-connect/payment-status?status=failure&payment_request={getattr(ref_doc, 'payment_hash', '') or ''}",
         },
     }
     return payload
