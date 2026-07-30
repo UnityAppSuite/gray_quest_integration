@@ -817,3 +817,70 @@ def get_applicant_payload_direct(controller, kwargs):
     }
 
     return payload
+
+
+def get_application_fee_payload(controller, kwargs):
+    """Build a GrayQuest payload for a Stage-1 Application Fee payment (direct, no
+    Payment Request). Discriminated by udf_3="application_fee" so the webhook routes
+    to the JBCN application-fee settlement, NOT the deposit one-time flow.
+
+    kwargs: reference_doctype, reference_docname (the Student Applicant), amount,
+    description, success_url, failure_url.
+    """
+    reference_doctype = kwargs.get("reference_doctype") or "Student Applicant"
+    applicant_id = kwargs.get("reference_docname") or kwargs.get("applicant") or kwargs.get("applicant_id")
+    applicant = frappe.get_doc("Student Applicant", applicant_id)
+    student_name = f"{applicant.first_name or ''} {applicant.last_name or ''}".strip()
+    amount = flt(kwargs.get("amount", 0), 2)
+    fee_headers = _application_fee_headers(controller, amount)
+
+    student_details = {"student_type": "NEW"}
+    name_parts = student_name.split()
+    if name_parts:
+        student_details["student_first_name"] = name_parts[0]
+        if len(name_parts) > 1:
+            student_details["student_last_name"] = " ".join(name_parts[1:])
+
+    customer_details = {}
+    guardian_name = getattr(applicant, "guardian_name", None) or getattr(applicant, "father_name", None) or student_name
+    if guardian_name:
+        guardian_parts = guardian_name.split()
+        if guardian_parts:
+            customer_details["customer_first_name"] = guardian_parts[0]
+            if len(guardian_parts) > 1:
+                customer_details["customer_last_name"] = " ".join(guardian_parts[1:])
+    email = kwargs.get("payer_email") or getattr(applicant, "student_email_id", None)
+    if email:
+        customer_details["customer_email"] = email.strip()
+
+    return {
+        "student_id": applicant_id,
+        "customer_mobile": _clean_mobile_number(
+            kwargs.get("payer_phone") or getattr(applicant, "student_mobile_number", "") or ""
+        ),
+        "fee_headers": fee_headers,
+        "student_details": student_details,
+        "customer_details": customer_details,
+        "notes": {
+            "description": kwargs.get("description") or f"Application Fee for {student_name}",
+            "reference_doctype": "Student Applicant",
+            "reference_docname": applicant_id,
+        },
+        "udf_details": {
+            "udf_1": reference_doctype,
+            "udf_2": applicant_id,
+            "udf_3": "application_fee",
+            "udf_4": amount,
+        },
+        "redirection": {
+            "success_url": kwargs.get("success_url") or f"{get_url()}/grayquest/success",
+            "error_url": kwargs.get("failure_url") or f"{get_url()}/grayquest/failure",
+        },
+    }
+
+
+def _application_fee_headers(controller, amount):
+    """Single-line fee breakup for the application fee. A plain parent-facing label;
+    routing here is by the GrayQuest merchant slug. Per-account routing (Bank Account
+    via default_label / a Gateway Split Rule) is deferred to BRD 05 Stage 2."""
+    return {"Application Fee": flt(amount, 2)}
