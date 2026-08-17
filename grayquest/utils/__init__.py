@@ -18,3 +18,18 @@ EMI_STATUS_MAPPING = {
     "emi.backout": "Backout",
     "emi.rejected": "Rejected",
 }
+
+# An EMI application only blocks payment while it is genuinely being processed.
+# Everything outside this set is terminal - note that "emi.process.completed"
+# means the process finished, so it must not block.
+EMI_IN_FLIGHT_EVENTS = {
+    "emi.form.submitted",
+    "emi.approved",
+    "emi.downpayment.captured",
+}
+
+# Events after which the application can no longer fund anything.
+EMI_UNSUCCESSFUL_EVENTS = {
+    "emi.rejected",
+    "emi.backout",
+}

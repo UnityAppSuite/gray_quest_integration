@@ -2,7 +2,11 @@ import frappe
 from frappe import _, db, get_doc, response
 from frappe.utils import get_datetime, now_datetime
 
-from grayquest.utils import EMI_STATUS_MAPPING
+from grayquest.utils import (
+    EMI_IN_FLIGHT_EVENTS,
+    EMI_STATUS_MAPPING,
+    EMI_UNSUCCESSFUL_EVENTS,
+)
 
 
 def handle_payment_gateway_webhook(data):
@@ -141,14 +145,17 @@ def handle_emi_webhook(data):
 
     Details:
         - udf_details contains doctype (Payment Request or Fees) and docname
+        - udf_3 carries the installment the application was raised for
         - EMI fields (is_emi_payment, emi_application_code) stored on Fees parent doc
-        - is_emi_payment marked on "emi.process.completed" or "emi.disbursed" event
+        - the blocking flag lives on the matching Payment Schedule row, so funding
+          one installment never blocks payment of the next one
     """
     try:
         # Extract user-defined fields (udf) details from the webhook data
         udf_details = data.get("udf_details", {})
         doctype = udf_details.get("udf_1")
         docname = udf_details.get("udf_2")
+        payment_term = udf_details.get("udf_3")
 
         # Extract application details from the webhook data
         application_details = data.get("application_details")
@@ -162,17 +169,20 @@ def handle_emi_webhook(data):
         if doctype == "Fees":
             doc = get_doc(doctype, docname)
 
-            # Set EMI fields on Fees parent doc
+            # Set EMI fields on Fees parent doc. The parent flag records that this
+            # fee is EMI funded (it drives the EMI Details tab and discount gating);
+            # it is deliberately not what the payment portal blocks on.
             doc.emi_application_code = application_code
-            if event in ("emi.form.submitted", "emi.process.completed", "emi.disbursed"):
-                if hasattr(doc, "is_emi_payment"):
-                    doc.db_set("is_emi_payment", 1)
-            elif event in ("emi.rejected", "emi.backout"):
-                if hasattr(doc, "is_emi_payment"):
-                    doc.db_set("is_emi_payment", 0)
+            if event == "emi.process.completed" or event == "emi.disbursed":
+                doc.is_emi_payment = 1
+            elif event in EMI_UNSUCCESSFUL_EVENTS:
+                doc.is_emi_payment = 0
+
+            # Mark/clear the blocking flag on the installment this application belongs to
+            set_term_emi_flag(doc, payment_term, event)
 
             # Update EMI status in the fees document
-            update_emi_status(doc, event, timestamp)
+            update_emi_status(doc, event, timestamp, payment_term)
 
             # Remove payment plan discount once user has committed to EMI
             if event in ("emi.form.submitted", "emi.process.completed", "emi.disbursed"):
@@ -182,7 +192,9 @@ def handle_emi_webhook(data):
             if event == "emi.disbursed":
                 notes = data.get("notes", {}) or {}
                 is_second_disbursal = bool(notes.get("id"))
-                message = doc.handle_emi_payment(application_code, is_second_disbursal)
+                message = doc.handle_emi_payment(
+                    application_code, is_second_disbursal, payment_term=payment_term
+                )
                 response["message"] = message
             else:
                 response["message"] = _("EMI Status Updated")
@@ -198,7 +210,7 @@ def handle_emi_webhook(data):
             doc = get_doc(doctype, docname)
 
             # Update EMI status in the payment request
-            update_emi_status(doc, event, timestamp)
+            update_emi_status(doc, event, timestamp, payment_term)
 
             # If the event is 'emi.disbursed', mark the payment as authorized/completed
             if event == "emi.disbursed":
@@ -229,7 +241,38 @@ def handle_response_web_form(data):
             frappe.log_error(f"{doctype} {docname} does not exist")
 
 
-def update_emi_status(doc, event, timestamp):
+def set_term_emi_flag(doc, payment_term, event):
+    """
+    Mark or clear the EMI blocking flag on a single installment.
+
+    Args:
+        doc (Document): Fees document
+        payment_term (str): Installment the EMI application was raised for (udf_3)
+        event (str): Webhook event
+
+    Details:
+        - the flag is set only while the application is in flight, and cleared on
+          every terminal event (disbursed, process completed, rejected, backout, closed)
+        - written with db.set_value so it persists regardless of the parent's save path
+        - a payload without udf_3 is left alone rather than guessed at
+    """
+    if not payment_term:
+        return
+
+    in_flight = 1 if event in EMI_IN_FLIGHT_EVENTS else 0
+    for schedule in doc.payment_schedule:
+        if str(schedule.payment_term) == str(payment_term):
+            db.set_value(
+                "Payment Schedule", schedule.name, "is_emi_payment", in_flight, update_modified=False
+            )
+            schedule.is_emi_payment = in_flight
+            # set_value only busts the child row's cache, but the payment portal reads
+            # the parent through get_cached_doc - without this it serves stale rows.
+            frappe.clear_document_cache("Fees", doc.name)
+            return
+
+
+def update_emi_status(doc, event, timestamp, payment_term=None):
     """
     Update EMI Status in Payment Request or Fees
 
@@ -237,6 +280,7 @@ def update_emi_status(doc, event, timestamp):
         doc (Document): Payment Request or Fees document
         event (str): Webhook event
         timestamp (str): Webhook timestamp
+        payment_term (str): Installment the EMI application was raised for (udf_3)
     """
     if not timestamp:
         timestamp = now_datetime()
@@ -250,10 +294,14 @@ def update_emi_status(doc, event, timestamp):
     if not status:
         return
 
-    doc.append("emi_status", {
+    row = {
         "status": status,
         "timestamp": timestamp,
-    })
+    }
+    if payment_term:
+        row["payment_term"] = payment_term
+
+    doc.append("emi_status", row)
     doc.save(ignore_permissions=True)
     doc.reload()
 
