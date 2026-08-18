@@ -1,8 +1,9 @@
 import frappe
 from frappe import _, db, get_doc, response
-from frappe.utils import get_datetime, now_datetime
+from frappe.utils import cint, flt, get_datetime, now_datetime
 
 from grayquest.utils import (
+    EMI_FUNDED_EVENTS,
     EMI_IN_FLIGHT_EVENTS,
     EMI_STATUS_MAPPING,
     EMI_UNSUCCESSFUL_EVENTS,
@@ -175,7 +176,7 @@ def handle_emi_webhook(data):
             doc.emi_application_code = application_code
             if event == "emi.process.completed" or event == "emi.disbursed":
                 doc.is_emi_payment = 1
-            elif event in EMI_UNSUCCESSFUL_EVENTS:
+            elif event in EMI_UNSUCCESSFUL_EVENTS and not has_emi_funded_installment(doc):
                 doc.is_emi_payment = 0
 
             # Mark/clear the blocking flag on the installment this application belongs to
@@ -241,9 +242,27 @@ def handle_response_web_form(data):
             frappe.log_error(f"{doctype} {docname} does not exist")
 
 
+def has_emi_funded_installment(doc):
+    """
+    Whether EMI has already settled an installment on this fee.
+
+    Args:
+        doc (Document): Fees document
+
+    Details:
+        - a rejection or backout on a later application must not clear the fee level
+          flag once EMI has funded an installment: money moved, and the flag drives
+          the EMI details tab as well as the payment plan discount gating
+    """
+    return any(
+        cint(schedule.get("is_emi_payment")) and flt(schedule.outstanding) <= 0
+        for schedule in doc.payment_schedule
+    )
+
+
 def set_term_emi_flag(doc, payment_term, event):
     """
-    Mark or clear the EMI blocking flag on a single installment.
+    Mark or clear the EMI flag on a single installment.
 
     Args:
         doc (Document): Fees document
@@ -251,21 +270,31 @@ def set_term_emi_flag(doc, payment_term, event):
         event (str): Webhook event
 
     Details:
-        - the flag is set only while the application is in flight, and cleared on
-          every terminal event (disbursed, process completed, rejected, backout, closed)
+        - the flag is set while the application is in flight, and again on the
+          disbursal: from the moment GrayQuest hands over the money, collecting the
+          installment from the parent again is the worse error, so it stays set even
+          if the settlement that follows fails
+        - it is cleared on the terminal events that fund nothing (rejected, backout),
+          but never on an installment that has already been settled - there the flag
+          is no longer a portal block (a paid installment is never offered) but the
+          record that this installment was EMI funded, and the process completed and
+          closed events that trail a disbursal must not erase it
         - written with db.set_value so it persists regardless of the parent's save path
         - a payload without udf_3 is left alone rather than guessed at
     """
     if not payment_term:
         return
 
-    in_flight = 1 if event in EMI_IN_FLIGHT_EVENTS else 0
+    flag = 1 if event in EMI_IN_FLIGHT_EVENTS or event in EMI_FUNDED_EVENTS else 0
     for schedule in doc.payment_schedule:
         if str(schedule.payment_term) == str(payment_term):
+            if not flag and flt(schedule.outstanding) <= 0:
+                return
+
             db.set_value(
-                "Payment Schedule", schedule.name, "is_emi_payment", in_flight, update_modified=False
+                "Payment Schedule", schedule.name, "is_emi_payment", flag, update_modified=False
             )
-            schedule.is_emi_payment = in_flight
+            schedule.is_emi_payment = flag
             # set_value only busts the child row's cache, but the payment portal reads
             # the parent through get_cached_doc - without this it serves stale rows.
             frappe.clear_document_cache("Fees", doc.name)
