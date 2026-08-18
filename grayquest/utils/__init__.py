@@ -28,6 +28,12 @@ EMI_IN_FLIGHT_EVENTS = {
     "emi.downpayment.captured",
 }
 
+# The event on which GrayQuest hands over the money. The installment it names is
+# EMI funded from here on, whether or not the settlement that follows succeeds.
+EMI_FUNDED_EVENTS = {
+    "emi.disbursed",
+}
+
 # Events after which the application can no longer fund anything.
 EMI_UNSUCCESSFUL_EVENTS = {
     "emi.rejected",
