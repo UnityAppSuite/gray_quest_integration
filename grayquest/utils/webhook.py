@@ -1,6 +1,6 @@
 import frappe
 from frappe import _, db, get_doc, response
-from frappe.utils import get_datetime, now_datetime
+from frappe.utils import flt, get_datetime, now_datetime
 
 from grayquest.utils import (
     EMI_IN_FLIGHT_EVENTS,
@@ -251,8 +251,12 @@ def set_term_emi_flag(doc, payment_term, event):
         event (str): Webhook event
 
     Details:
-        - the flag is set only while the application is in flight, and cleared on
-          every terminal event (disbursed, process completed, rejected, backout, closed)
+        - the flag is set while the application is in flight, and cleared on every
+          terminal event (disbursed, process completed, rejected, backout, closed)
+        - an installment EMI has already settled keeps the flag: there it is no longer
+          a portal block (a paid installment is never offered) but the record that this
+          installment was EMI funded, and the events that trail a disbursal must not
+          erase it
         - written with db.set_value so it persists regardless of the parent's save path
         - a payload without udf_3 is left alone rather than guessed at
     """
@@ -262,6 +266,9 @@ def set_term_emi_flag(doc, payment_term, event):
     in_flight = 1 if event in EMI_IN_FLIGHT_EVENTS else 0
     for schedule in doc.payment_schedule:
         if str(schedule.payment_term) == str(payment_term):
+            if not in_flight and flt(schedule.outstanding) <= 0:
+                return
+
             db.set_value(
                 "Payment Schedule", schedule.name, "is_emi_payment", in_flight, update_modified=False
             )
