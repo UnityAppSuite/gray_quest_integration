@@ -134,6 +134,7 @@ def handle_payment_gateway_webhook(data):
                 response["message"] = _("Payment successfully captured and processed.")
             else:
                 if hasattr(doc, "validate_payment"):
+                    payment_details["application_details"] = application_details
                     doc.validate_payment(payment_details)
                 else:
                     posting_date = _parse_webhook_date(payment_details.get("paid_on"))
