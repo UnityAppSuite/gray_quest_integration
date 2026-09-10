@@ -4,6 +4,17 @@ import frappe
 from frappe.utils import flt, get_date_str, get_url
 
 
+def _sanitize_alpha(value):
+    """Remove non-alphabetic characters from a string for GrayQuest API validation.
+    Returns None if the result is empty, so callers can skip the field entirely.
+    GrayQuest rejects empty values and non-alphabet characters in name fields.
+    """
+    if not value:
+        return None
+    cleaned = re.sub(r'[^a-zA-Z]', '', str(value)).strip()
+    return cleaned or None
+
+
 def build_callback_url(payment_request):
     """
     Build callback URL for GrayQuest redirect after payment.
@@ -65,7 +76,7 @@ def _get_event_ticket_payload(ticket_doc, data):
     furl = data.get("failure_url")
     payload = {
         "student_id": guardian.name,
-        "customer_mobile": guardian.mobile_number or "9999999999",
+        "customer_mobile": _clean_mobile_number(guardian.mobile_number or ""),
         "customer_details": get_customer_details(guardian),
         "fee_headers": get_fee_headers(ticket_doc, data),
         "notes": get_notes(ticket_doc, data),
@@ -105,13 +116,13 @@ def _get_student_payment_payload(controller, ref_doc, data):
         if student.applicant_name:
             customer_details["customer_first_name"] = student.applicant_name
         if student.email_id:
-            customer_details["customer_email"] = student.email_id
+            customer_details["customer_email"] = student.email_id.strip()
         if student.mobile:
             customer_mobile = student.mobile.replace("+91-", "").replace("+91", "")
     url = redirect_url or get_url()
     payload = {
         "student_id": student.name,
-        "customer_mobile": customer_mobile or student.student_mobile_number or "9999999999",
+        "customer_mobile": _clean_mobile_number(customer_mobile or student.student_mobile_number or ""),
         "fee_headers": get_fee_headers(ref_doc, data),
         "student_details": get_student_details(controller, student),
         "customer_details": customer_details,
@@ -136,40 +147,39 @@ def get_student_details(controller, student):
         dict: A dictionary containing the student details.
     """
     # Format date of birth and joining date
-    date_of_birth = get_date_str(student.date_of_birth)
+    date_of_birth = get_date_str(student.date_of_birth) if student.date_of_birth else None
     joining_date = student.get("joining_date")
     student_status = student.get("student_status")
 
-    # Fetch program name
-    program_name = frappe.get_value("Program", student.program, "program_name")
-    sequence = frappe.get_value("Program", student.program, "sequence")
-
     # Construct the student details dictionary
     student_details = {}
-    if student.first_name:
-        student_details["student_first_name"] = student.first_name
-    if student.middle_name:
-        student_details["student_middle_name"] = student.middle_name
-    if student.last_name:
-        student_details["student_last_name"] = student.last_name
+    first_name = _sanitize_alpha(student.first_name)
+    middle_name = _sanitize_alpha(student.middle_name)
+    last_name = _sanitize_alpha(student.last_name)
+    if first_name:
+        student_details["student_first_name"] = first_name
+    if middle_name:
+        student_details["student_middle_name"] = middle_name
+    if last_name:
+        student_details["student_last_name"] = last_name
     if date_of_birth:
         student_details["student_dob"] = date_of_birth
-    if student.gender:
+    if student.gender and student.gender.upper() in ("MALE", "FEMALE"):
         student_details["student_gender"] = student.gender.upper()
     if student.student_email_id:
-        student_details["student_email"] = student.student_email_id
+        student_details["student_email"] = student.student_email_id.strip()
     if joining_date:
-        joining_date = get_date_str(joining_date)
-        student_details["student_admission_date"] = joining_date
+        formatted_joining_date = get_date_str(joining_date)
+        if formatted_joining_date:
+            student_details["student_admission_date"] = formatted_joining_date
     if student.blood_group:
         student_details["student_blood_group"] = student.blood_group
     student_details["student_type"] = "NEW" if not student_status or student_status == "New student" else "EXISTING"
 
-    if controller.pass_class_id:
-        if program_name.isdigit():
-            student_details["student_class_id"] = int(program_name)
-        elif sequence:
-            student_details["student_class_id"] = int(sequence)
+    class_id = _get_class_id(controller, student.program)
+    if class_id is not None:
+        student_details["student_class_id"] = class_id
+
     return student_details
 
 
@@ -185,14 +195,17 @@ def get_customer_details(guardian):
     """
     # Construct the customer details dictionary
     customer_details = {}
-    if guardian.first_name:
-        customer_details["customer_first_name"] = guardian.first_name
-    if guardian.middle_name:
-        customer_details["customer_middle_name"] = guardian.middle_name
-    if guardian.last_name:
-        customer_details["customer_last_name"] = guardian.last_name
+    first_name = _sanitize_alpha(guardian.first_name)
+    middle_name = _sanitize_alpha(guardian.middle_name)
+    last_name = _sanitize_alpha(guardian.last_name)
+    if first_name:
+        customer_details["customer_first_name"] = first_name
+    if middle_name:
+        customer_details["customer_middle_name"] = middle_name
+    if last_name:
+        customer_details["customer_last_name"] = last_name
     if guardian.email_address:
-        customer_details["customer_email"] = guardian.email_address
+        customer_details["customer_email"] = guardian.email_address.strip()
     return customer_details
 
 
@@ -460,7 +473,7 @@ def _get_student_applicant_payload(controller, ref_doc, data):
     applicant = frappe.get_doc("Student Applicant", ref_doc.reference_name)
 
     # Get and clean mobile number
-    raw_mobile = applicant.student_mobile_number or applicant.mobile or "9999999999"
+    raw_mobile = applicant.student_mobile_number or applicant.mobile or ""
     customer_mobile = _clean_mobile_number(raw_mobile)
 
     # Build callback URL (simple - just payment_request)
@@ -507,9 +520,12 @@ def _get_student_applicant_details(controller, applicant):
     full_name = applicant.student_name or applicant.applicant_name or ""
     name_parts = full_name.split() if full_name else []
     if name_parts:
-        student_details["student_first_name"] = name_parts[0]
-        if len(name_parts) > 1:
-            student_details["student_last_name"] = " ".join(name_parts[1:])
+        first_name = _sanitize_alpha(name_parts[0])
+        last_name = _sanitize_alpha(" ".join(name_parts[1:])) if len(name_parts) > 1 else None
+        if first_name:
+            student_details["student_first_name"] = first_name
+        if last_name:
+            student_details["student_last_name"] = last_name
 
     # Student Applicant is always NEW
     student_details["student_type"] = "NEW"
@@ -519,21 +535,16 @@ def _get_student_applicant_details(controller, applicant):
         student_details["student_dob"] = get_date_str(applicant.date_of_birth)
 
     # Gender
-    if applicant.gender:
+    if applicant.gender and applicant.gender.upper() in ("MALE", "FEMALE"):
         student_details["student_gender"] = applicant.gender.upper()
 
     # Email
     if applicant.email_id:
-        student_details["student_email"] = applicant.email_id
+        student_details["student_email"] = applicant.email_id.strip()
 
-    # Program/Class ID
-    if controller.pass_class_id and applicant.program:
-        program_name = frappe.get_value("Program", applicant.program, "program_name") or applicant.program
-        sequence = frappe.get_value("Program", applicant.program, "sequence")
-        if program_name and str(program_name).isdigit():
-            student_details["student_class_id"] = int(program_name)
-        elif sequence:
-            student_details["student_class_id"] = int(sequence)
+    class_id = _get_class_id(controller, applicant.program)
+    if class_id is not None:
+        student_details["student_class_id"] = class_id
 
     return student_details
 
@@ -567,9 +578,12 @@ def _get_student_applicant_customer_details(applicant):
     if guardian_name:
         name_parts = guardian_name.split() if guardian_name else []
         if name_parts:
-            customer_details["customer_first_name"] = name_parts[0]
-            if len(name_parts) > 1:
-                customer_details["customer_last_name"] = " ".join(name_parts[1:])
+            first_name = _sanitize_alpha(name_parts[0])
+            last_name = _sanitize_alpha(" ".join(name_parts[1:])) if len(name_parts) > 1 else None
+            if first_name:
+                customer_details["customer_first_name"] = first_name
+            if last_name:
+                customer_details["customer_last_name"] = last_name
 
     # Try to get email
     customer_email = (
@@ -579,9 +593,18 @@ def _get_student_applicant_customer_details(applicant):
         ""
     )
     if customer_email:
-        customer_details["customer_email"] = customer_email
+        customer_details["customer_email"] = customer_email.strip()
 
     return customer_details
+
+
+def _get_class_id(controller, program):
+    """Get class_id from program_abbreviation if pass_class_id is enabled. """
+    if controller.pass_class_id and program:
+        abbr = frappe.get_value("Program", program, "program_abbreviation")
+        if abbr:
+            return int(abbr)
+    return None
 
 
 def _clean_mobile_number(mobile):
@@ -599,8 +622,8 @@ def _clean_mobile_number(mobile):
     if len(digits) > 10:
         digits = digits[-10:]
     if len(digits) < 10:
-        # Invalid mobile number - use default to not block payment flow
-        digits = "9999999999"
+        # Invalid mobile number - pass empty to let GrayQuest handle it
+        digits = ""
     return digits
 
 
@@ -618,8 +641,9 @@ def get_fees_payload(controller, kwargs):
 
     fee_hash = kwargs.get("fee_hash", "")
     split_payments = kwargs.get("split_payments", {})
+    split_payments_emi = kwargs.get("split_payments_emi")
     amount = flt(kwargs.get("amount", 0), 2)
-    fee_headers = _build_fee_headers(split_payments, controller, amount)
+    fee_headers = _build_fee_headers(split_payments, controller, amount, split_payments_emi=split_payments_emi)
 
     notes = {
         "description": f"Fee payment for {student.student_name}",
@@ -630,9 +654,9 @@ def get_fees_payload(controller, kwargs):
 
     payload = {
         "student_id": student_id,
-        "customer_mobile": _clean_mobile_number(student.student_mobile_number or "9999999999"),
+        "customer_mobile": _clean_mobile_number(student.student_mobile_number or ""),
         "fee_headers": fee_headers,
-        "student_details": _get_student_details_minimal(student),
+        "student_details": _get_student_details_minimal(controller, student, kwargs),
         "customer_details": customer_details,
         "notes": notes,
         "udf_details": {
@@ -651,7 +675,7 @@ def get_fees_payload(controller, kwargs):
     return payload
 
 
-def _build_fee_headers(split_payments, controller=None, amount=None):
+def _build_fee_headers(split_payments, controller=None, amount=None, split_payments_emi=None):
     """Build fee_headers with EMI/PG prefixes when split payment enabled, else use default_label."""
     if not split_payments or not isinstance(split_payments, dict):
         if controller and controller.default_label and amount:
@@ -666,12 +690,13 @@ def _build_fee_headers(split_payments, controller=None, amount=None):
         )
         frappe.throw("Unable to process payment. Please contact support.")
 
-    base_headers = {label: flt(amt, 2) for label, amt in split_payments.items()}
-    return _apply_payment_prefixes(base_headers, controller)
+    pg_headers = {label: flt(amt, 2) for label, amt in split_payments.items()}
+    emi_headers = {label: flt(amt, 2) for label, amt in split_payments_emi.items()} if split_payments_emi else pg_headers
+    return _apply_payment_prefixes(pg_headers, controller, emi_headers=emi_headers)
 
 
-def _apply_payment_prefixes(base_headers, controller):
-    """Apply _EMI/_PG suffixes to fee headers. Throws error if neither EMI nor PG is enabled."""
+def _apply_payment_prefixes(pg_headers, controller, emi_headers=None):
+    """Apply _EMI/_PG suffixes to fee headers using separate amounts for each mode."""
     if not controller:
         frappe.log_error(title="GrayQuest Configuration Error", message="GrayQuest Settings not configured.")
         frappe.throw("Unable to process payment. Please contact support.")
@@ -688,14 +713,15 @@ def _apply_payment_prefixes(base_headers, controller):
 
     result = {}
     if pg_enabled:
-        result.update({f"{label}_PG": amt for label, amt in base_headers.items()})
+        result.update({f"{label}_PG": amt for label, amt in pg_headers.items()})
     if emi_enabled:
-        result.update({f"{label}_EMI": amt for label, amt in base_headers.items()})
+        headers = emi_headers or pg_headers
+        result.update({f"{label}_EMI": amt for label, amt in headers.items()})
 
     return result
 
 
-def _get_student_details_minimal(student):
+def _get_student_details_minimal(controller, student, kwargs=None):
     """Get minimal student details (first_name, last_name, student_type) for GrayQuest payload."""
     student_status = student.get("student_status")
     details = {"student_type": "NEW" if not student_status or student_status == "New student" else "EXISTING"}
@@ -703,6 +729,14 @@ def _get_student_details_minimal(student):
         details["student_first_name"] = student.first_name
     if student.last_name:
         details["student_last_name"] = student.last_name
+
+    program = student.program
+    if kwargs and kwargs.get("reference_doctype") == "Fees" and kwargs.get("reference_docname"):
+        program = frappe.db.get_value("Fees", kwargs["reference_docname"], "program") or program
+    class_id = _get_class_id(controller, program)
+    if class_id is not None:
+        details["student_class_id"] = class_id
+
     return details
 
 
@@ -714,7 +748,7 @@ def _get_student_notes(student):
     if student.gender:
         notes["student_gender"] = student.gender.upper()
     if student.student_email_id:
-        notes["student_email"] = student.student_email_id
+        notes["student_email"] = student.student_email_id.strip()
     if student.get("joining_date"):
         notes["student_admission_date"] = get_date_str(student.joining_date)
     return notes
@@ -737,6 +771,10 @@ def get_applicant_payload_direct(controller, kwargs):
         if len(name_parts) > 1:
             student_details["student_last_name"] = " ".join(name_parts[1:])
 
+    class_id = _get_class_id(controller, applicant.program)
+    if class_id is not None:
+        student_details["student_class_id"] = class_id
+
     customer_details = {}
     guardian_name = getattr(applicant, 'guardian_name', None) or getattr(applicant, 'father_name', None) or student_name
     if guardian_name:
@@ -746,7 +784,7 @@ def get_applicant_payload_direct(controller, kwargs):
             if len(guardian_parts) > 1:
                 customer_details["customer_last_name"] = " ".join(guardian_parts[1:])
     if kwargs.get("payer_email") or applicant.student_email_id:
-        customer_details["customer_email"] = kwargs.get("payer_email") or applicant.student_email_id
+        customer_details["customer_email"] = (kwargs.get("payer_email") or applicant.student_email_id).strip()
 
     notes = {
         "description": f"Deposit payment for {student_name}",
@@ -758,11 +796,11 @@ def get_applicant_payload_direct(controller, kwargs):
     if applicant.gender:
         notes["student_gender"] = applicant.gender.upper()
     if applicant.student_email_id:
-        notes["student_email"] = applicant.student_email_id
+        notes["student_email"] = applicant.student_email_id.strip()
 
     payload = {
         "student_id": applicant_id,
-        "customer_mobile": _clean_mobile_number(kwargs.get("payer_phone") or applicant.student_mobile_number or "9999999999"),
+        "customer_mobile": _clean_mobile_number(kwargs.get("payer_phone") or applicant.student_mobile_number or ""),
         "fee_headers": fee_headers,
         "student_details": student_details,
         "customer_details": customer_details,
@@ -779,3 +817,70 @@ def get_applicant_payload_direct(controller, kwargs):
     }
 
     return payload
+
+
+def get_application_fee_payload(controller, kwargs):
+    """Build a GrayQuest payload for a Stage-1 Application Fee payment (direct, no
+    Payment Request). Discriminated by udf_3="application_fee" so the webhook routes
+    to the JBCN application-fee settlement, NOT the deposit one-time flow.
+
+    kwargs: reference_doctype, reference_docname (the Student Applicant), amount,
+    description, success_url, failure_url.
+    """
+    reference_doctype = kwargs.get("reference_doctype") or "Student Applicant"
+    applicant_id = kwargs.get("reference_docname") or kwargs.get("applicant") or kwargs.get("applicant_id")
+    applicant = frappe.get_doc("Student Applicant", applicant_id)
+    student_name = f"{applicant.first_name or ''} {applicant.last_name or ''}".strip()
+    amount = flt(kwargs.get("amount", 0), 2)
+    fee_headers = _application_fee_headers(controller, amount)
+
+    student_details = {"student_type": "NEW"}
+    name_parts = student_name.split()
+    if name_parts:
+        student_details["student_first_name"] = name_parts[0]
+        if len(name_parts) > 1:
+            student_details["student_last_name"] = " ".join(name_parts[1:])
+
+    customer_details = {}
+    guardian_name = getattr(applicant, "guardian_name", None) or getattr(applicant, "father_name", None) or student_name
+    if guardian_name:
+        guardian_parts = guardian_name.split()
+        if guardian_parts:
+            customer_details["customer_first_name"] = guardian_parts[0]
+            if len(guardian_parts) > 1:
+                customer_details["customer_last_name"] = " ".join(guardian_parts[1:])
+    email = kwargs.get("payer_email") or getattr(applicant, "student_email_id", None)
+    if email:
+        customer_details["customer_email"] = email.strip()
+
+    return {
+        "student_id": applicant_id,
+        "customer_mobile": _clean_mobile_number(
+            kwargs.get("payer_phone") or getattr(applicant, "student_mobile_number", "") or ""
+        ),
+        "fee_headers": fee_headers,
+        "student_details": student_details,
+        "customer_details": customer_details,
+        "notes": {
+            "description": kwargs.get("description") or f"Application Fee for {student_name}",
+            "reference_doctype": "Student Applicant",
+            "reference_docname": applicant_id,
+        },
+        "udf_details": {
+            "udf_1": reference_doctype,
+            "udf_2": applicant_id,
+            "udf_3": "application_fee",
+            "udf_4": amount,
+        },
+        "redirection": {
+            "success_url": kwargs.get("success_url") or f"{get_url()}/grayquest/success",
+            "error_url": kwargs.get("failure_url") or f"{get_url()}/grayquest/failure",
+        },
+    }
+
+
+def _application_fee_headers(controller, amount):
+    """Single-line fee breakup for the application fee. A plain parent-facing label;
+    routing here is by the GrayQuest merchant slug. Per-account routing (Bank Account
+    via default_label / a Gateway Split Rule) is deferred to BRD 05 Stage 2."""
+    return {"Application Fee": flt(amount, 2)}
