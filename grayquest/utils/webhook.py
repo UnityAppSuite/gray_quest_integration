@@ -65,6 +65,14 @@ def handle_payment_gateway_webhook(data):
 
             # Handle direct Student Applicant payment
             if doctype == "Student Applicant" and payment_details.get("status") == "PAID":
+                # Stage-1 application fee (BRD 05): discriminated by udf_3 and settled via the
+                # JBCN idempotent resolver on the doc — distinct from the deposit one-time flow.
+                if payment_term == "application_fee":
+                    doc.settle_application_fee_payment(
+                        "Paid", amount=amount, transaction_reference=application_code
+                    )
+                    response["message"] = _("Application Fee Payment Captured")
+                    return
                 result = doc.on_payment_authorized(
                     status="Completed",
                     transaction_id=application_code,
@@ -120,6 +128,12 @@ def handle_payment_gateway_webhook(data):
             # Get doctype and docname from udf_details
             doctype = udf_details.get("udf_1")
             docname = udf_details.get("udf_2")
+            payment_term = udf_details.get("udf_3")
+            # Application fee failure (BRD 05 §D.1): the webhook log is the record; leave the
+            # applicant status untouched so the parent can retry on the same link.
+            if doctype == "Student Applicant" and payment_term == "application_fee":
+                response["message"] = _("Application fee payment failed. Please retry on the same link.")
+                return
             doc = get_doc(doctype, docname)
             if hasattr(doc, "validate_failed_payment"):
                 res = doc.validate_failed_payment(data)
