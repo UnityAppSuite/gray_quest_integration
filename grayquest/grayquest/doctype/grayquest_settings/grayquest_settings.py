@@ -3,14 +3,15 @@
 import base64
 
 import frappe
+import requests
 from frappe import _, db, response
 from frappe.auth import LoginManager
+from frappe.integrations.utils import create_request_log
 from frappe.model.document import Document
 from frappe.utils import call_hook_method
 from payments.utils import create_payment_gateway
 
 from grayquest.utils import get_payload
-from grayquest.utils.api_client import make_request
 from grayquest.utils.webhook import (
     add_webhook_log,
     handle_emi_webhook,
@@ -43,7 +44,6 @@ class GrayQuestSettings(Document):
         return url
 
     def generate_url(self, kwargs):
-        headers = self.get_headers()
         payload = get_payload(self, kwargs)
         api_url = self.api_url.strip("/")
         slug = self.slug
@@ -51,34 +51,110 @@ class GrayQuestSettings(Document):
             slug = self.event_slug
         endpoint = f"{api_url}/v1/pp/redirect/{slug}"
 
-        result = make_request(
-            url=endpoint,
-            data=payload,
-            headers=headers,
-            service="Initiate Payment",
+        reference_docname = kwargs.get("reference_docname")
+        response = self.make_request(
             method="POST",
+            endpoint=endpoint,
+            payload=payload,
+            reference_doctype=kwargs.get("reference_doctype"),
+            reference_docname=reference_docname,
+            request_description="GrayQuest Payment Request url",
         )
 
-        if isinstance(result, dict) and result.get("data", {}).get("redirection_url"):
-            return result["data"]["redirection_url"]
-
-        return result.get("message") if isinstance(result, dict) else None
+        if response.ok:
+            return response.json().get("data", {}).get("redirection_url")
+        else:
+            response_data = response.json()
+            frappe.log_error(_("GrayQuest Payment Gateway Error"), response_data)
+            frappe.throw(
+                _("GrayQuest Payment Error: {0}").format(response_data.get("message", "Unknown error")),
+                title=_("Payment Gateway Error"),
+            )
 
     def get_headers(self):
-        if self.api_key and self.client_id and self.client_secret:
-            client_secret = self.get_password("client_secret")
-            api_key = self.get_password("api_key")
+        if not (self.api_key and self.client_id and self.client_secret):
+            frappe.throw(
+                _("GrayQuest API credentials are not configured. Please set API Key, Client ID, and Client Secret in GrayQuest Settings."),
+                title=_("GrayQuest Configuration Error"),
+            )
 
-            # Encode client_id and client_secret in base64
-            credentials = f"{self.client_id}:{client_secret}"
-            auth_token = base64.b64encode(credentials.encode()).decode()
+        client_secret = self.get_password("client_secret")
+        api_key = self.get_password("api_key")
 
-            # Headers
-            return {
-                "Authorization": f"Basic {auth_token}",
-                "GQ-API-Key": api_key,
-                "Content-Type": "application/json",
-            }
+        # Encode client_id and client_secret in base64
+        credentials = f"{self.client_id}:{client_secret}"
+        auth_token = base64.b64encode(credentials.encode()).decode()
+
+        # Headers
+        return {
+            "Authorization": f"Basic {auth_token}",
+            "GQ-API-Key": api_key,
+            "Content-Type": "application/json",
+        }
+
+    def log_request(self, service_name, data, url=None, **kwargs):
+        """Create an Integration Request log entry for GrayQuest API calls."""
+        return create_request_log(
+            data=data,
+            service_name=service_name,
+            url=url,
+            **kwargs,
+        )
+
+    def make_request(self, method, endpoint, payload=None, params=None,
+                     reference_doctype=None, reference_docname=None,
+                     request_description=None):
+        """
+        Make an HTTP request to GrayQuest API and log it via Integration Request.
+
+        Args:
+            method: HTTP method ("GET" or "POST")
+            endpoint: Full API endpoint URL
+            payload: JSON body for POST requests
+            params: Query parameters for GET requests
+            reference_doctype: Linked document type for logging
+            reference_docname: Linked document name for logging
+            request_description: Description for the Integration Request log
+
+        Returns:
+            requests.Response: Response from the API
+        """
+        headers = self.get_headers()
+
+        redacted_headers = {
+            key: "******" if key in ("Authorization", "GQ-API-Key") else value
+            for key, value in headers.items()
+        }
+
+        integration_request = self.log_request(
+            service_name="GrayQuest",
+            data=payload or params or {},
+            url=endpoint,
+            request_headers=redacted_headers,
+            reference_doctype=reference_doctype,
+            reference_docname=reference_docname,
+            request_description=request_description,
+        )
+
+        try:
+            if method == "POST":
+                response = requests.post(endpoint, headers=headers, json=payload)
+            elif method == "GET":
+                response = requests.get(endpoint, headers=headers, params=params)
+            else:
+                frappe.throw(_("Unsupported HTTP method: {0}").format(method))
+
+            response_data = response.json()
+
+            if response.ok:
+                integration_request.handle_success(response_data)
+            else:
+                integration_request.handle_failure(response_data)
+            frappe.db.commit()
+            return response
+        except Exception:
+            integration_request.handle_failure({"error": frappe.get_traceback()})
+            raise
 
     def handle_webhook(self, data):
         # Add webhook log
@@ -119,24 +195,26 @@ class GrayQuestSettings(Document):
         """
         api_url = self.api_url.strip("/")
         endpoint = f"{api_url}/v1/payments/fetch"
-        headers = self.get_headers()
         transaction_id = db.get_value("Payment Request", payment_request, "transaction_id")
-        payload = {"application_code": transaction_id}
+        params = {"application_code": transaction_id}
 
-        result = make_request(
-            url=endpoint,
-            data=payload,
-            headers=headers,
-            service="Check Payment Status",
+        res = self.make_request(
             method="GET",
+            endpoint=endpoint,
+            params=params,
+            reference_doctype="Payment Request",
+            reference_docname=payment_request,
+            request_description="GrayQuest Payment Status Check",
         )
 
-        response["message"] = result
+        if not res.ok:
+            frappe.log_error(_("GrayQuest Payment Gateway Error"), res.json())
+
+        response["message"] = res.json()
 
     def _request_payment_url(self, payload, context="Payment"):
         """Make API request to GrayQuest and return payment URL."""
-        headers = self.get_headers()
-        if not headers:
+        if not (self.api_key and self.client_id and self.client_secret):
             frappe.log_error(
                 title="GrayQuest Configuration Error",
                 message="API credentials not configured (api_key, client_id, or client_secret missing)"
@@ -146,20 +224,20 @@ class GrayQuestSettings(Document):
         api_url = self.api_url.strip("/")
         endpoint = f"{api_url}/v1/pp/redirect/{self.slug}"
 
-        result = make_request(
-            url=endpoint,
-            data=payload,
-            headers=headers,
-            service=f"Initiate Payment - {context}",
+        res = self.make_request(
             method="POST",
+            endpoint=endpoint,
+            payload=payload,
+            request_description=f"GrayQuest {context} Payment Request",
         )
 
-        if isinstance(result, dict):
-            url = result.get("data", {}).get("redirection_url")
+        if res.ok:
+            url = res.json().get("data", {}).get("redirection_url")
             if url:
                 return url
 
-        error_msg = result.get("message") or result.get("error") if isinstance(result, dict) else str(result)
+        response_data = res.json()
+        error_msg = response_data.get("message") or response_data.get("error") or f"Request failed: {res.status_code}"
         frappe.log_error(
             title=f"GrayQuest {context} API Error",
             message=f"Endpoint: {endpoint}\nResponse: {error_msg}"
@@ -178,6 +256,15 @@ class GrayQuestSettings(Document):
         payload = get_applicant_payload_direct(self, kwargs)
         return self._request_payment_url(payload, context="Applicant")
 
+    def get_application_fee_payment_url(self, **kwargs):
+        """Generate a hosted payment URL for a Stage-1 Application Fee (direct,
+        no Payment Request). kwargs: reference_doctype, reference_docname, amount,
+        description, success_url, failure_url. The callback carries
+        udf_3="application_fee" for routing."""
+        from grayquest.utils import get_application_fee_payload
+        payload = get_application_fee_payload(self, kwargs)
+        return self._request_payment_url(payload, context="Application Fee")
+
     def handle_response(self, data):
         """
         Handle payment response from GrayQuest success page (like Easebuzz handle_response).
@@ -193,51 +280,29 @@ class GrayQuestSettings(Document):
         Returns:
             dict: Result message
         """
-        from frappe.auth import LoginManager
-
         try:
-            login_manager = LoginManager()
-            login_manager.login_as("Administrator")
-
             # Extract data
             udf_details = data.get("udf_details", {})
             doctype = udf_details.get("udf_1")
             docname = udf_details.get("udf_2")
-            payment_term = udf_details.get("udf_3")
 
-            application_details = data.get("application_details", {})
-            transaction_id = application_details.get("code")
 
             payment_details = data.get("payment_details", {})
             status = payment_details.get("status")
-            amount = payment_details.get("amount")
-
-            if status != "PAID":
-                return {"message": "Payment not completed"}
 
             if not frappe.db.exists(doctype, docname):
                 frappe.log_error(f"GrayQuest: {doctype} {docname} does not exist")
                 return {"message": "Document not found"}
 
-            doc = frappe.get_doc(doctype, docname, ignore_permissions=True)
-
             if doctype == "Fees":
-                doc.on_payment_authorized(
-                    status="Completed",
-                    payment_term=payment_term,
-                    transaction_id=transaction_id,
-                    amount=amount
-                )
-                return {"message": "Payment Successful"}
+                if status != "PAID":
+                    return {"message": "Payment not completed"}
+                return {"message": "Payment successful for Fees"}
 
             elif doctype == "Student Applicant":
-                result = doc.on_payment_authorized(
-                    status="Completed",
-                    transaction_id=transaction_id,
-                    amount=amount
-                )
-                return result or {"message": "Applicant Payment Successful"}
-
+                if status != "PAID":
+                    return {"message": "Payment not completed"}
+                return {"message": "Payment successful for Student Applicant"}
             else:
                 frappe.log_error(f"GrayQuest: Unsupported doctype {doctype}")
                 return {"message": "Unsupported document type"}
@@ -245,8 +310,3 @@ class GrayQuestSettings(Document):
         except Exception as e:
             frappe.log_error("GrayQuest handle_response Error", frappe.get_traceback())
             return {"message": f"Payment processing failed: {str(e)}"}
-        finally:
-            try:
-                login_manager.logout()
-            except Exception:
-                pass

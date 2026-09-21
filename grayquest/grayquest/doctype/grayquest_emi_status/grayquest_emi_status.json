@@ -7,6 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "status",
+  "payment_term",
   "column_break_aeep",
   "timestamp"
  ],
@@ -17,6 +18,13 @@
    "in_list_view": 1,
    "label": "Status",
    "options": "Form Submitted\nApproved\nDownpayment Captured\nProcess Completed\nDisbursed\nInstallment Captured\nInstallment Overdue\nClosed\nBackout\nRejected"
+  },
+  {
+   "description": "Installment this EMI application was raised for (GrayQuest udf_3).",
+   "fieldname": "payment_term",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Payment Term"
   },
   {
    "fieldname": "column_break_aeep",
@@ -32,7 +40,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-01-30 14:30:00.000000",
+ "modified": "2026-08-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "GrayQuest",
  "name": "GrayQuest EMI Status",

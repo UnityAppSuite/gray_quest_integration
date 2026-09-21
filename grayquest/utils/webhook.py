@@ -1,8 +1,13 @@
 import frappe
 from frappe import _, db, get_doc, response
-from frappe.utils import get_datetime, now_datetime
+from frappe.utils import cint, flt, get_datetime, now_datetime
 
-from grayquest.utils import EMI_STATUS_MAPPING
+from grayquest.utils import (
+    EMI_FUNDED_EVENTS,
+    EMI_IN_FLIGHT_EVENTS,
+    EMI_STATUS_MAPPING,
+    EMI_UNSUCCESSFUL_EVENTS,
+)
 
 
 def handle_payment_gateway_webhook(data):
@@ -60,6 +65,14 @@ def handle_payment_gateway_webhook(data):
 
             # Handle direct Student Applicant payment
             if doctype == "Student Applicant" and payment_details.get("status") == "PAID":
+                # Stage-1 application fee (BRD 05): discriminated by udf_3 and settled via the
+                # JBCN idempotent resolver on the doc — distinct from the deposit one-time flow.
+                if payment_term == "application_fee":
+                    doc.settle_application_fee_payment(
+                        "Paid", amount=amount, transaction_reference=application_code
+                    )
+                    response["message"] = _("Application Fee Payment Captured")
+                    return
                 result = doc.on_payment_authorized(
                     status="Completed",
                     transaction_id=application_code,
@@ -115,6 +128,12 @@ def handle_payment_gateway_webhook(data):
             # Get doctype and docname from udf_details
             doctype = udf_details.get("udf_1")
             docname = udf_details.get("udf_2")
+            payment_term = udf_details.get("udf_3")
+            # Application fee failure (BRD 05 §D.1): the webhook log is the record; leave the
+            # applicant status untouched so the parent can retry on the same link.
+            if doctype == "Student Applicant" and payment_term == "application_fee":
+                response["message"] = _("Application fee payment failed. Please retry on the same link.")
+                return
             doc = get_doc(doctype, docname)
             if hasattr(doc, "validate_failed_payment"):
                 res = doc.validate_failed_payment(data)
@@ -141,14 +160,17 @@ def handle_emi_webhook(data):
 
     Details:
         - udf_details contains doctype (Payment Request or Fees) and docname
+        - udf_3 carries the installment the application was raised for
         - EMI fields (is_emi_payment, emi_application_code) stored on Fees parent doc
-        - is_emi_payment marked on "emi.process.completed" or "emi.disbursed" event
+        - the blocking flag lives on the matching Payment Schedule row, so funding
+          one installment never blocks payment of the next one
     """
     try:
         # Extract user-defined fields (udf) details from the webhook data
         udf_details = data.get("udf_details", {})
         doctype = udf_details.get("udf_1")
         docname = udf_details.get("udf_2")
+        payment_term = udf_details.get("udf_3")
 
         # Extract application details from the webhook data
         application_details = data.get("application_details")
@@ -162,19 +184,32 @@ def handle_emi_webhook(data):
         if doctype == "Fees":
             doc = get_doc(doctype, docname)
 
-            # Set EMI fields on Fees parent doc
+            # Set EMI fields on Fees parent doc. The parent flag records that this
+            # fee is EMI funded (it drives the EMI Details tab and discount gating);
+            # it is deliberately not what the payment portal blocks on.
             doc.emi_application_code = application_code
             if event == "emi.process.completed" or event == "emi.disbursed":
                 doc.is_emi_payment = 1
+            elif event in EMI_UNSUCCESSFUL_EVENTS and not has_emi_funded_installment(doc):
+                doc.is_emi_payment = 0
+
+            # Mark/clear the blocking flag on the installment this application belongs to
+            set_term_emi_flag(doc, payment_term, event)
 
             # Update EMI status in the fees document
-            update_emi_status(doc, event, timestamp)
+            update_emi_status(doc, event, timestamp, payment_term)
+
+            # Remove payment plan discount once user has committed to EMI
+            if event in ("emi.form.submitted", "emi.process.completed", "emi.disbursed"):
+                doc.remove_payment_plan_discount()
 
             # If the event is 'emi.disbursed', handle based on tranche type
             if event == "emi.disbursed":
                 notes = data.get("notes", {}) or {}
                 is_second_disbursal = bool(notes.get("id"))
-                message = doc.handle_emi_payment(application_code, is_second_disbursal)
+                message = doc.handle_emi_payment(
+                    application_code, is_second_disbursal, payment_term=payment_term
+                )
                 response["message"] = message
             else:
                 response["message"] = _("EMI Status Updated")
@@ -190,7 +225,7 @@ def handle_emi_webhook(data):
             doc = get_doc(doctype, docname)
 
             # Update EMI status in the payment request
-            update_emi_status(doc, event, timestamp)
+            update_emi_status(doc, event, timestamp, payment_term)
 
             # If the event is 'emi.disbursed', mark the payment as authorized/completed
             if event == "emi.disbursed":
@@ -201,7 +236,7 @@ def handle_emi_webhook(data):
 
     except Exception as e:
         # Log the error and return an error message
-        frappe.log_error(f"EMI Webhook Error: {str(e)}", frappe.get_traceback())
+        frappe.log_error("EMI Webhook Error", frappe.get_traceback())
         response["message"] = _("Error in EMI Webhook")
 
 
@@ -221,7 +256,66 @@ def handle_response_web_form(data):
             frappe.log_error(f"{doctype} {docname} does not exist")
 
 
-def update_emi_status(doc, event, timestamp):
+def has_emi_funded_installment(doc):
+    """
+    Whether EMI has already settled an installment on this fee.
+
+    Args:
+        doc (Document): Fees document
+
+    Details:
+        - a rejection or backout on a later application must not clear the fee level
+          flag once EMI has funded an installment: money moved, and the flag drives
+          the EMI details tab as well as the payment plan discount gating
+    """
+    return any(
+        cint(schedule.get("is_emi_payment")) and flt(schedule.outstanding) <= 0
+        for schedule in doc.payment_schedule
+    )
+
+
+def set_term_emi_flag(doc, payment_term, event):
+    """
+    Mark or clear the EMI flag on a single installment.
+
+    Args:
+        doc (Document): Fees document
+        payment_term (str): Installment the EMI application was raised for (udf_3)
+        event (str): Webhook event
+
+    Details:
+        - the flag is set while the application is in flight, and again on the
+          disbursal: from the moment GrayQuest hands over the money, collecting the
+          installment from the parent again is the worse error, so it stays set even
+          if the settlement that follows fails
+        - it is cleared on the terminal events that fund nothing (rejected, backout),
+          but never on an installment that has already been settled - there the flag
+          is no longer a portal block (a paid installment is never offered) but the
+          record that this installment was EMI funded, and the process completed and
+          closed events that trail a disbursal must not erase it
+        - written with db.set_value so it persists regardless of the parent's save path
+        - a payload without udf_3 is left alone rather than guessed at
+    """
+    if not payment_term:
+        return
+
+    flag = 1 if event in EMI_IN_FLIGHT_EVENTS or event in EMI_FUNDED_EVENTS else 0
+    for schedule in doc.payment_schedule:
+        if str(schedule.payment_term) == str(payment_term):
+            if not flag and flt(schedule.outstanding) <= 0:
+                return
+
+            db.set_value(
+                "Payment Schedule", schedule.name, "is_emi_payment", flag, update_modified=False
+            )
+            schedule.is_emi_payment = flag
+            # set_value only busts the child row's cache, but the payment portal reads
+            # the parent through get_cached_doc - without this it serves stale rows.
+            frappe.clear_document_cache("Fees", doc.name)
+            return
+
+
+def update_emi_status(doc, event, timestamp, payment_term=None):
     """
     Update EMI Status in Payment Request or Fees
 
@@ -229,6 +323,7 @@ def update_emi_status(doc, event, timestamp):
         doc (Document): Payment Request or Fees document
         event (str): Webhook event
         timestamp (str): Webhook timestamp
+        payment_term (str): Installment the EMI application was raised for (udf_3)
     """
     if not timestamp:
         timestamp = now_datetime()
@@ -242,10 +337,14 @@ def update_emi_status(doc, event, timestamp):
     if not status:
         return
 
-    doc.append("emi_status", {
+    row = {
         "status": status,
         "timestamp": timestamp,
-    })
+    }
+    if payment_term:
+        row["payment_term"] = payment_term
+
+    doc.append("emi_status", row)
     doc.save(ignore_permissions=True)
     doc.reload()
 
@@ -275,7 +374,7 @@ def add_webhook_log(data):
             student = db.get_value(doctype, docname, "party")
         elif doctype == "Fees":
             student = db.get_value(doctype, docname, "student")
-        elif frappe.db.has_column(doctype, "student"):
+        elif doctype and frappe.db.has_column(doctype, "student"):
             student = db.get_value(doctype, docname, "student")
         else:
             student = None
