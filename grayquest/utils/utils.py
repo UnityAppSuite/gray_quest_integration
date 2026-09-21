@@ -832,7 +832,7 @@ def get_application_fee_payload(controller, kwargs):
     applicant = frappe.get_doc("Student Applicant", applicant_id)
     student_name = f"{applicant.first_name or ''} {applicant.last_name or ''}".strip()
     amount = flt(kwargs.get("amount", 0), 2)
-    fee_headers = _application_fee_headers(controller, amount)
+    fee_headers = _application_fee_headers(controller, amount, kwargs.get("bank_account"))
 
     student_details = {"student_type": "NEW"}
     name_parts = student_name.split()
@@ -879,8 +879,15 @@ def get_application_fee_payload(controller, kwargs):
     }
 
 
-def _application_fee_headers(controller, amount):
-    """Single-line fee breakup for the application fee. A plain parent-facing label;
-    routing here is by the GrayQuest merchant slug. Per-account routing (Bank Account
-    via default_label / a Gateway Split Rule) is deferred to BRD 05 Stage 2."""
-    return {"Application Fee": flt(amount, 2)}
+def _application_fee_headers(controller, amount, bank_account=None):
+    """Fee header for the application fee: the label is a Bank Account's account_name.
+    Uses bank_account, else the settings default_label; throws if neither resolves."""
+    bank_account = bank_account or getattr(controller, "default_label", None)
+    account_name = bank_account and frappe.db.get_value("Bank Account", bank_account, "account_name")
+    if not account_name:
+        frappe.log_error(
+            title="GrayQuest Payment Configuration Error",
+            message=f"No bank_account or default_label for the application fee. bank_account={bank_account}",
+        )
+        frappe.throw("Unable to process payment. Please contact support.")
+    return {account_name: flt(amount, 2)}
