@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 import frappe
 from frappe import _
 
@@ -44,8 +46,9 @@ def handle_payment_callback(**kwargs):
         payment_hash = frappe.db.get_value("Payment Request", payment_request, "payment_hash")
         base_url = frappe.utils.get_url()
         if payment_hash:
-            success_url = f"{base_url}/tgaa-connect/payment-status?status=success&payment_request={payment_hash}"
-            failure_url = f"{base_url}/tgaa-connect/payment-status?status=failure&payment_request={payment_hash}"
+            token = quote(payment_hash, safe="")
+            success_url = f"{base_url}/tgaa-connect/payment-status?status=success&payment_request={token}"
+            failure_url = f"{base_url}/tgaa-connect/payment-status?status=failure&payment_request={token}"
         else:
             success_url = failure_url = "/"
 
