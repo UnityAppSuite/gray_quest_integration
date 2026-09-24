@@ -1,4 +1,5 @@
 import re
+from urllib.parse import quote
 
 import frappe
 from frappe.utils import flt, get_date_str, get_url
@@ -31,7 +32,7 @@ def build_callback_url(payment_request):
     base_url = get_url()
     # Keep URL simple - only pass payment_request
     # The callback handler will build return_url from payment_hash
-    return f"{base_url}/api/method/grayquest.api.handle_payment_callback?payment_request={payment_request}"
+    return f"{base_url}/api/method/grayquest.api.handle_payment_callback?payment_request={quote(payment_request, safe='')}"
 
 
 def get_payload(controller, data):
@@ -84,8 +85,8 @@ def _get_event_ticket_payload(controller, ticket_doc, data):
         "notes": get_notes(ticket_doc, data),
         "udf_details": {"udf_1": ticket_doc.doctype, "udf_2": ticket_doc.name},
         "redirection": {
-            "success_url": surl or f"{get_url()}/walsh/events",
-            "error_url": furl or f"{get_url()}/walsh/events",
+            "success_url": surl or f"{get_url()}/tgaa-connect/payment-status?status=success&ticket={quote(ticket_doc.name, safe='')}",
+            "error_url": furl or f"{get_url()}/tgaa-connect/payment-status?status=failure&ticket={quote(ticket_doc.name, safe='')}",
         },
     }
 
@@ -171,8 +172,8 @@ def _get_student_payment_payload(controller, ref_doc, data):
             "udf_5": getattr(ref_doc, "payment_term", None),
         },
         "redirection": {
-            "success_url": data.get("success_url") or f"{url}/tgaa-connect/payment-status?status=success&payment_request={getattr(ref_doc, 'payment_hash', '') or ''}",
-            "error_url": data.get("failure_url") or f"{url}/tgaa-connect/payment-status?status=failure&payment_request={getattr(ref_doc, 'payment_hash', '') or ''}",
+            "success_url": data.get("success_url") or f"{url}/tgaa-connect/payment-status?status=success&payment_request={quote(getattr(ref_doc, 'payment_hash', '') or '', safe='')}",
+            "error_url": data.get("failure_url") or f"{url}/tgaa-connect/payment-status?status=failure&payment_request={quote(getattr(ref_doc, 'payment_hash', '') or '', safe='')}",
         },
     }
     return payload
