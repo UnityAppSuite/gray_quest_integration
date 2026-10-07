@@ -256,6 +256,15 @@ class GrayQuestSettings(Document):
         payload = get_applicant_payload_direct(self, kwargs)
         return self._request_payment_url(payload, context="Applicant")
 
+    def get_application_fee_payment_url(self, **kwargs):
+        """Generate a hosted payment URL for a Stage-1 Application Fee (direct,
+        no Payment Request). kwargs: reference_doctype, reference_docname, amount,
+        description, success_url, failure_url. The callback carries
+        udf_3="application_fee" for routing."""
+        from grayquest.utils import get_application_fee_payload
+        payload = get_application_fee_payload(self, kwargs)
+        return self._request_payment_url(payload, context="Application Fee")
+
     def handle_response(self, data):
         """
         Handle payment response from GrayQuest success page (like Easebuzz handle_response).

@@ -4,6 +4,7 @@ from grayquest.utils.utils import (
     get_customer_details,
     get_fees_payload,
     get_applicant_payload_direct,
+    get_application_fee_payload,
 )
 
 EMI_STATUS_MAPPING = {
