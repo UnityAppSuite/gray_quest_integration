@@ -6,6 +6,8 @@ from frappe.auth import LoginManager
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def webhook_handler(**kwargs):
     """Handle GrayQuest webhook notifications."""
+    if frappe.flags.read_only:
+        frappe.throw("Site is in read only mode for maintenance, try again later", frappe.InReadOnlyMode)
     data = frappe.parse_json(kwargs)
     controller = frappe.get_last_doc("GrayQuest Settings")
     controller.handle_webhook(data)
