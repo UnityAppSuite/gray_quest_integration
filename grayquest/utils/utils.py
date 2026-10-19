@@ -5,6 +5,15 @@ import frappe
 from frappe.utils import flt, get_date_str, get_url
 
 
+def _encode_redirect_url(url):
+    """GrayQuest rejects redirect URLs that contain raw spaces."""
+    frappe.log_error(title="URL", message=str(url))
+    if not url or " " not in str(url):
+        return url
+    return str(url).replace(" ", "%20")
+    
+
+
 def _sanitize_alpha(value):
     """Remove non-alphabetic characters from a string for GrayQuest API validation.
     Returns None if the result is empty, so callers can skip the field entirely.
@@ -56,13 +65,24 @@ def get_payload(controller, data):
 
     # Handle Student Applicant payments via Payment Request
     if hasattr(ref_doc, 'reference_doctype') and ref_doc.reference_doctype == "Student Applicant":
-        return _get_student_applicant_payload(controller, ref_doc, data)
-
-    # Handle Ticket payments
-    if doctype == "Ticket":
+        payload = _get_student_applicant_payload(controller, ref_doc, data)
+    elif doctype == "Ticket":
         payload = _get_event_ticket_payload(controller, ref_doc, data)
     else:
         payload = _get_student_payment_payload(controller, ref_doc, data)
+
+    redirection = payload.get("redirection") or {}
+    encoded_any = False
+    for key in ("success_url", "error_url"):
+        raw = redirection.get(key)
+        encoded = _encode_redirect_url(raw)
+        if encoded != raw:
+            encoded_any = True
+        redirection[key] = encoded
+    if redirection:
+        payload["redirection"] = redirection
+    if encoded_any:
+        frappe.log_error(title="GrayQuest redirect URL encoded", message=str(redirection))
 
     return payload
 
