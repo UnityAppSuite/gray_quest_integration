@@ -135,7 +135,7 @@ class GrayQuestSettings(Document):
             if method == "POST":
                 response = requests.post(endpoint, headers=headers, json=payload)
             elif method == "GET":
-                response = requests.get(endpoint, headers=headers, params=params)
+                response = requests.get(endpoint, headers=headers, params=params, timeout=30)
             else:
                 frappe.throw(_("Unsupported HTTP method: {0}").format(method))
 
@@ -168,6 +168,27 @@ class GrayQuestSettings(Document):
 
     def add_webhook_log(self, data):
         add_webhook_log(data)
+
+    def fetch_payment(self, application_code, reference_doctype=None, reference_docname=None):
+        """
+        Fetch GrayQuest's own record of a payment (`GET /v1/payments/fetch`).
+
+        Returns the parsed response body. Callers MUST check `success`: GrayQuest answers
+        unknown application codes with HTTP 200 and `success: false`. On success `data`
+        carries `payment_status` (seen: PAID / FAILED / EXPIRED), `payment_amount`,
+        `payment_id`, `transaction_timestamp` and the `udf_details` we sent.
+
+        Raises on network errors / non-JSON replies so callers can fail safe.
+        """
+        res = self.make_request(
+            method="GET",
+            endpoint=f"{self.api_url.strip('/')}/v1/payments/fetch",
+            params={"application_code": application_code},
+            reference_doctype=reference_doctype,
+            reference_docname=reference_docname,
+            request_description="GrayQuest Payment Status Check",
+        )
+        return res.json()
 
     def check_payment_status(self, payment_request):
         """
