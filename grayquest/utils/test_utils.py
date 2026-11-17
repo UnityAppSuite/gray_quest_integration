@@ -2,22 +2,25 @@ from unittest.mock import MagicMock, patch
 
 from frappe.tests.utils import FrappeTestCase
 
-from grayquest.utils.utils import _get_fee_header_for_grade, _get_ticket_fee_headers
+from grayquest.utils.utils import _get_fee_header_for_grade, _get_ticket_fee_headers, _has_section_row
 
 
-def _make_seat(allocated_student, student_grade):
+def _make_seat(allocated_student, student_grade, student_group=None):
 	seat = MagicMock()
 	seat.allocated_student = allocated_student
 	seat.student_grade = student_grade
+	seat.student_group = student_group
 	return seat
 
 
-def _make_grade_detail(grade, payment_gateway, payment_gateway_name, fee_header):
+def _make_grade_detail(grade, payment_gateway, payment_gateway_name, fee_header, applies_to="Class", student_group=None):
 	row = MagicMock()
 	row.grade = grade
 	row.payment_gateway = payment_gateway
 	row.payment_gateway_name = payment_gateway_name
 	row.fee_header = fee_header
+	row.applies_to = applies_to
+	row.student_group = student_group
 	return row
 
 
@@ -238,3 +241,79 @@ class TestGetTicketFeeHeaders(FrappeTestCase):
 		result = _get_ticket_fee_headers(ticket, {})
 
 		self.assertEqual(result, {"total_payable": 2000.0, "current_payable": 2000.0})
+
+
+class TestSectionFeeHeaders(FrappeTestCase):
+	"""Section rows pick the fee header of the student's section, falling back to the Class row."""
+
+	GATEWAY = "GrayQuest Settings"
+	GATEWAY_NAME = "TGCH - Event"
+
+	def _event(self, *rows):
+		event = MagicMock()
+		event.grade_details = list(rows)
+		event.student_fee = 1000.0
+		return event
+
+	def _row(self, grade, fee_header, applies_to="Class", student_group=None):
+		return _make_grade_detail(grade, self.GATEWAY, self.GATEWAY_NAME, fee_header, applies_to, student_group)
+
+	def test_section_row_wins_over_class_row_for_its_student(self):
+		event = self._event(
+			self._row("Grade 5-TGAA", "Class_Fee"),
+			self._row("Grade 5-TGAA", "SectionA_Fee", "Section", "A-Grade 5"),
+		)
+
+		in_section = _get_fee_header_for_grade(event, "Grade 5-TGAA", self.GATEWAY, self.GATEWAY_NAME, "A-Grade 5")
+		other_section = _get_fee_header_for_grade(event, "Grade 5-TGAA", self.GATEWAY, self.GATEWAY_NAME, "B-Grade 5")
+
+		self.assertEqual(in_section, "SectionA_Fee")
+		self.assertEqual(other_section, "Class_Fee")
+
+	def test_section_row_is_not_used_when_no_student_group_is_given(self):
+		event = self._event(self._row("Grade 5-TGAA", "SectionA_Fee", "Section", "A-Grade 5"))
+
+		result = _get_fee_header_for_grade(event, "Grade 5-TGAA", self.GATEWAY, self.GATEWAY_NAME)
+
+		self.assertIsNone(result)
+
+	def test_has_section_row_requires_matching_gateway(self):
+		event = self._event(self._row("Grade 5-TGAA", "SectionA_Fee", "Section", "A-Grade 5"))
+
+		self.assertTrue(_has_section_row(event, "A-Grade 5", self.GATEWAY, self.GATEWAY_NAME))
+		self.assertFalse(_has_section_row(event, "A-Grade 5", "Razorpay Merchant Settings", self.GATEWAY_NAME))
+		self.assertFalse(_has_section_row(event, None, self.GATEWAY, self.GATEWAY_NAME))
+
+	@patch("grayquest.utils.utils.frappe")
+	def test_siblings_in_same_grade_but_different_sections_get_separate_headers(self, mock_frappe):
+		seats = [
+			_make_seat("STU-001", "Grade 5-TGAA", "A-Grade 5"),
+			_make_seat("STU-002", "Grade 5-TGAA", "B-Grade 5"),
+		]
+		ticket = _make_ticket(
+			seats=seats, amount=2000.0, free_seats_count=2, chargeable_seats_count=0
+		)
+		mock_frappe.get_doc.return_value = self._event(
+			self._row("Grade 5-TGAA", "SectionA_Fee", "Section", "A-Grade 5"),
+			self._row("Grade 5-TGAA", "Class_Fee"),
+		)
+		mock_frappe.db.count.return_value = 1
+		mock_frappe.utils.flt = __import__("frappe").utils.flt
+
+		result = _get_ticket_fee_headers(ticket, {})
+
+		self.assertEqual(result, {"SectionA_Fee": 1000.0, "Class_Fee": 1000.0})
+
+	@patch("grayquest.utils.utils.frappe")
+	def test_class_only_event_still_groups_by_grade_regardless_of_section(self, mock_frappe):
+		seats = [
+			_make_seat("STU-001", "Grade 5-TGAA", "A-Grade 5"),
+			_make_seat("STU-002", "Grade 5-TGAA", "B-Grade 5"),
+		]
+		ticket = _make_ticket(seats=seats, amount=2000.0)
+		mock_frappe.get_doc.return_value = self._event(self._row("Grade 5-TGAA", "Class_Fee"))
+		mock_frappe.utils.flt = __import__("frappe").utils.flt
+
+		result = _get_ticket_fee_headers(ticket, {})
+
+		self.assertEqual(result, {"Class_Fee": 2000.0})
