@@ -135,6 +135,11 @@ def handle_payment_gateway_webhook(data):
             else:
                 if hasattr(doc, "validate_payment"):
                     payment_details["application_details"] = application_details
+                    # For Student Applicant, use order_details.amount (original fee)
+                    # instead of payment_details.amount (which includes gateway charges)
+                    order_details = data.get("order_details", {})
+                    if order_details.get("amount"):
+                        payment_details["amount"] = order_details["amount"]
                     doc.validate_payment(payment_details)
                 else:
                     posting_date = _parse_webhook_date(payment_details.get("paid_on"))

@@ -5,6 +5,15 @@ import frappe
 from frappe.utils import flt, get_date_str, get_url
 
 
+def _encode_redirect_url(url):
+    """GrayQuest rejects redirect URLs that contain raw spaces."""
+    frappe.log_error(title="URL", message=str(url))
+    if not url or " " not in str(url):
+        return url
+    return str(url).replace(" ", "%20")
+    
+
+
 def _sanitize_alpha(value):
     """Remove non-alphabetic characters from a string for GrayQuest API validation.
     Returns None if the result is empty, so callers can skip the field entirely.
@@ -56,13 +65,24 @@ def get_payload(controller, data):
 
     # Handle Student Applicant payments via Payment Request
     if hasattr(ref_doc, 'reference_doctype') and ref_doc.reference_doctype == "Student Applicant":
-        return _get_student_applicant_payload(controller, ref_doc, data)
-
-    # Handle Ticket payments
-    if doctype == "Ticket":
+        payload = _get_student_applicant_payload(controller, ref_doc, data)
+    elif doctype == "Ticket":
         payload = _get_event_ticket_payload(controller, ref_doc, data)
     else:
         payload = _get_student_payment_payload(controller, ref_doc, data)
+
+    redirection = payload.get("redirection") or {}
+    encoded_any = False
+    for key in ("success_url", "error_url"):
+        raw = redirection.get(key)
+        encoded = _encode_redirect_url(raw)
+        if encoded != raw:
+            encoded_any = True
+        redirection[key] = encoded
+    if redirection:
+        payload["redirection"] = redirection
+    if encoded_any:
+        frappe.log_error(title="GrayQuest redirect URL encoded", message=str(redirection))
 
     return payload
 
@@ -329,20 +349,6 @@ def _get_ticket_fee_headers(ticket_doc, data):
     if not hasattr(ticket_doc, 'seats') or not ticket_doc.seats:
         return base_headers  # Fallback
 
-    # Extract unique students and their grades from seats
-    students_by_grade = {}
-    for seat in ticket_doc.seats:
-        if seat.allocated_student and seat.student_grade:
-            grade = seat.student_grade
-            student_id = seat.allocated_student
-
-            if grade not in students_by_grade:
-                students_by_grade[grade] = set()
-            students_by_grade[grade].add(student_id)
-
-    if not students_by_grade:
-        return base_headers  # Fallback - no students with grades
-
     # Get event to access grade_details
     event = frappe.get_doc("Event Listing", ticket_doc.event)
 
@@ -350,14 +356,33 @@ def _get_ticket_fee_headers(ticket_doc, data):
     selected_gateway = ticket_doc.payment_gateway_type
     selected_gateway_name = ticket_doc.payment_gateway_account
 
-    # Check if all students are in same grade
+    # Extract unique students from seats, grouped by (grade, section). The section only
+    # counts when the event has a Section row for it, so Class-only events group by grade as before.
+    students_by_grade = {}
+    for seat in ticket_doc.seats:
+        if seat.allocated_student and seat.student_grade:
+            grade = seat.student_grade
+            student_id = seat.allocated_student
+            section = getattr(seat, "student_group", None)
+            if not _has_section_row(event, section, selected_gateway, selected_gateway_name):
+                section = None
+            key = (grade, section)
+
+            if key not in students_by_grade:
+                students_by_grade[key] = set()
+            students_by_grade[key].add(student_id)
+
+    if not students_by_grade:
+        return base_headers  # Fallback - no students with grades
+
+    # Check if all students are in same grade and section
     unique_grades = list(students_by_grade.keys())
 
     # Scenario 1 & 2: Single student or Same grade siblings
     if len(unique_grades) == 1:
-        grade = unique_grades[0]
-        # Find fee_header for this grade and payment gateway
-        fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
+        grade, section = unique_grades[0]
+        # Find fee_header for this grade (or section) and payment gateway
+        fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name, section)
 
         if fee_header_name:
             # Return only the specific fee header, not total/current payable
@@ -366,11 +391,11 @@ def _get_ticket_fee_headers(ticket_doc, data):
         # Fallback if no fee_header found
         return base_headers
 
-    # Scenario 3: Different grade siblings
+    # Scenario 3: Different grade or section siblings
     # Convert sets to lists for calculation
     students_by_grade_list = {
-        grade: [{"student": student_id} for student_id in students]
-        for grade, students in students_by_grade.items()
+        key: [{"student": student_id} for student_id in students]
+        for key, students in students_by_grade.items()
     }
 
     grade_breakdown = _calculate_grade_breakdown(ticket_doc, students_by_grade_list)
@@ -379,8 +404,8 @@ def _get_ticket_fee_headers(ticket_doc, data):
     fee_headers = {}
     has_fee_headers = False
 
-    for grade, amount in grade_breakdown.items():
-        fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name)
+    for (grade, section), amount in grade_breakdown.items():
+        fee_header_name = _get_fee_header_for_grade(event, grade, selected_gateway, selected_gateway_name, section)
         if fee_header_name:
             fee_headers[fee_header_name] = fee_headers.get(fee_header_name, 0) + amount
             has_fee_headers = True
@@ -393,15 +418,31 @@ def _get_ticket_fee_headers(ticket_doc, data):
     return base_headers
 
 
-def _get_fee_header_for_grade(event, grade, payment_gateway, payment_gateway_name):
+def _has_section_row(event, student_group, payment_gateway, payment_gateway_name):
+    """True if the event has a Section row for this student group and payment gateway."""
+    if not student_group:
+        return False
+    for grade_detail in getattr(event, "grade_details", None) or []:
+        if (getattr(grade_detail, "applies_to", None) == "Section"
+                and grade_detail.student_group == student_group
+                and grade_detail.payment_gateway == payment_gateway
+                and grade_detail.payment_gateway_name == payment_gateway_name):
+            return True
+    return False
+
+
+def _get_fee_header_for_grade(event, grade, payment_gateway, payment_gateway_name, student_group=None):
     """
-    Get the configured fee_header for a specific grade and payment gateway.
+    Get the configured fee_header for a grade (or a section of it) and payment gateway.
+
+    A Section row for `student_group` wins over the Class row of its grade.
 
     Args:
         event (Document): Event Listing document
         grade (str): Grade/Program name
         payment_gateway (str): Payment gateway DocType name
         payment_gateway_name (str): Payment gateway instance name
+        student_group (str, optional): Student Group (section) of the student
 
     Returns:
         str: Fee header name or None
@@ -409,13 +450,18 @@ def _get_fee_header_for_grade(event, grade, payment_gateway, payment_gateway_nam
     if not hasattr(event, 'grade_details') or not event.grade_details:
         return None
 
+    class_header = None
     for grade_detail in event.grade_details:
-        if (grade_detail.grade == grade and
-            grade_detail.payment_gateway == payment_gateway and
-            grade_detail.payment_gateway_name == payment_gateway_name):
-            return grade_detail.fee_header
+        if (grade_detail.payment_gateway != payment_gateway
+                or grade_detail.payment_gateway_name != payment_gateway_name):
+            continue
+        if getattr(grade_detail, "applies_to", None) == "Section":
+            if student_group and grade_detail.student_group == student_group:
+                return grade_detail.fee_header
+        elif class_header is None and grade_detail.grade == grade:
+            class_header = grade_detail.fee_header
 
-    return None
+    return class_header
 
 
 def _calculate_grade_breakdown(ticket_doc, students_by_grade):
