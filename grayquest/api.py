@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 import frappe
 from frappe import _
 from frappe.auth import LoginManager
@@ -45,18 +47,25 @@ def handle_payment_callback(**kwargs):
             frappe.local.response["location"] = "/"
             return
 
-        # Build return URL
+        # Build return URLs
         payment_hash = frappe.db.get_value("Payment Request", payment_request, "payment_hash")
-        return_url = f"/payment?payment_request={payment_hash}" if payment_hash else "/"
+        base_url = frappe.utils.get_url()
+        if payment_hash:
+            token = quote(payment_hash, safe="")
+            success_url = f"{base_url}/tgaa-connect/payment-status?status=success&payment_request={token}"
+            failure_url = f"{base_url}/tgaa-connect/payment-status?status=failure&payment_request={token}"
+        else:
+            success_url = failure_url = "/"
 
         # Skip if already paid
         if frappe.db.get_value("Payment Request", payment_request, "status") == "Paid":
             frappe.local.response["type"] = "redirect"
-            frappe.local.response["location"] = return_url
+            frappe.local.response["location"] = success_url
             return
 
         # Security: Require application_code to prevent URL tampering
         # GrayQuest always sends application_code on successful payment
+        payment_succeeded = False
         if status == "success" and application_code:
             # Login as Administrator for payment processing (same pattern as Easebuzz)
             login_manager.login_as("Administrator")
@@ -72,9 +81,10 @@ def handle_payment_callback(**kwargs):
                 doc.on_payment_authorized(status="Completed")
 
             frappe.db.commit()
+            payment_succeeded = True
 
         frappe.local.response["type"] = "redirect"
-        frappe.local.response["location"] = return_url
+        frappe.local.response["location"] = success_url if payment_succeeded else failure_url
 
     except Exception as e:
         frappe.log_error(title="GrayQuest Callback Error", message=frappe.get_traceback())
