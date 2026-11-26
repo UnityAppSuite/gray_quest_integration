@@ -1,6 +1,8 @@
+from datetime import datetime
+
 import frappe
 from frappe import _, db, get_doc, response
-from frappe.utils import cint, flt, get_datetime, now_datetime
+from frappe.utils import cint, flt, now_datetime
 
 from grayquest.utils import (
     EMI_FUNDED_EVENTS,
@@ -8,6 +10,30 @@ from grayquest.utils import (
     EMI_STATUS_MAPPING,
     EMI_UNSUCCESSFUL_EVENTS,
 )
+
+# GrayQuest sends webhook timestamps as IST wall-clock "DD-MM-YYYY HH:MM:SS".
+GQ_TIMESTAMP_FORMAT = "%d-%m-%Y %H:%M:%S"
+
+
+def parse_gq_timestamp(value):
+    """
+    Parse a GrayQuest webhook timestamp.
+
+    Details:
+        - parsed strictly as day-first: a generic parser reads "02-09-2026" as 9 Feb
+        - a missing value means "now"; an unparseable one is logged and also falls
+          back to now, so the event is still recorded at its receipt time
+    """
+    if not value:
+        return now_datetime()
+    try:
+        return datetime.strptime(value, GQ_TIMESTAMP_FORMAT)
+    except (TypeError, ValueError):
+        frappe.log_error(
+            "GrayQuest Webhook Timestamp Error",
+            f"Unparseable timestamp {value!r}; expected DD-MM-YYYY HH:MM:SS. Using receipt time.",
+        )
+        return now_datetime()
 
 
 def handle_payment_gateway_webhook(data):
@@ -325,13 +351,7 @@ def update_emi_status(doc, event, timestamp, payment_term=None):
         timestamp (str): Webhook timestamp
         payment_term (str): Installment the EMI application was raised for (udf_3)
     """
-    if not timestamp:
-        timestamp = now_datetime()
-    elif isinstance(timestamp, str):
-        timestamp = get_datetime(timestamp)
-        # Strip timezone info for MySQL compatibility
-        if hasattr(timestamp, 'replace') and timestamp.tzinfo is not None:
-            timestamp = timestamp.replace(tzinfo=None)
+    timestamp = parse_gq_timestamp(timestamp)
 
     status = EMI_STATUS_MAPPING.get(event)
     if not status:
@@ -357,14 +377,7 @@ def add_webhook_log(data):
         data (dict): Webhook data
     """
     try:
-        timestamp = data.get("timestamp")
-        if not timestamp:
-            timestamp = now_datetime()
-        elif isinstance(timestamp, str):
-            timestamp = get_datetime(timestamp)
-            # Strip timezone info for MySQL compatibility
-            if hasattr(timestamp, 'replace') and timestamp.tzinfo is not None:
-                timestamp = timestamp.replace(tzinfo=None)
+        timestamp = parse_gq_timestamp(data.get("timestamp"))
         application_details = data.get("application_details", {})
         application_code = application_details.get("code")
         udf_details = data.get("udf_details", {})
