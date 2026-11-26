@@ -11,28 +11,18 @@ from grayquest.utils import (
     EMI_UNSUCCESSFUL_EVENTS,
 )
 
-# GrayQuest sends webhook timestamps as IST wall-clock "DD-MM-YYYY HH:MM:SS".
+# GrayQuest sends IST wall-clock timestamps, day-first.
 GQ_TIMESTAMP_FORMAT = "%d-%m-%Y %H:%M:%S"
 
 
 def parse_gq_timestamp(value):
-    """
-    Parse a GrayQuest webhook timestamp.
-
-    Details:
-        - parsed strictly as day-first: a generic parser reads "02-09-2026" as 9 Feb
-        - a missing value means "now"; an unparseable one is logged and also falls
-          back to now, so the event is still recorded at its receipt time
-    """
+    """Parse a GrayQuest webhook timestamp; falls back to now if missing or malformed."""
     if not value:
         return now_datetime()
     try:
         return datetime.strptime(value, GQ_TIMESTAMP_FORMAT)
     except (TypeError, ValueError):
-        frappe.log_error(
-            "GrayQuest Webhook Timestamp Error",
-            f"Unparseable timestamp {value!r}; expected DD-MM-YYYY HH:MM:SS. Using receipt time.",
-        )
+        frappe.log_error("GrayQuest Webhook Timestamp Error", f"Unparseable timestamp: {value!r}")
         return now_datetime()
 
 

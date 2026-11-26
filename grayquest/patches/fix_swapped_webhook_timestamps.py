@@ -9,13 +9,7 @@ from grayquest.utils.webhook import GQ_TIMESTAMP_FORMAT
 
 
 def execute():
-	"""
-	Re-derive webhook log and EMI status timestamps from the stored raw payload.
-
-	Before this fix "DD-MM-YYYY" payload timestamps went through get_datetime, which reads
-	them month-first. The wrong value is reproduced exactly with the old parser, so only
-	rows still holding it are touched.
-	"""
+	"""Fix webhook log and EMI status timestamps stored month-first instead of day-first."""
 	for log in frappe.get_all(
 		"GrayQuest Webhook Log",
 		fields=["name", "data", "event", "timestamp", "reference_doctype", "reference_name"],
@@ -26,6 +20,7 @@ def execute():
 		except (TypeError, ValueError):
 			continue
 
+		# Value the old get_datetime parsing stored; only rows still holding it are touched.
 		wrong = get_datetime(raw).replace(tzinfo=None)
 		if wrong == correct:
 			continue
